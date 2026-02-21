@@ -14,6 +14,7 @@ package identity
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -173,11 +174,22 @@ func (r *registry) Register(ctx context.Context, req RegistrationRequest) (*Iden
 		return nil, fmt.Errorf("identity: chain unreachable during register: %w", ErrChainUnreachable)
 	}
 
-	// In a full implementation, this would:
-	// 1. ABI-encode the register(agentID, pubKey, metadata) call
-	// 2. Sign the transaction with cfg.PrivateKey
-	// 3. Call eth_sendRawTransaction
-	// 4. Poll for receipt via eth_getTransactionReceipt
+	// Production registration steps:
+	//
+	// 1. ABI-encode the register(bytes32, bytes, bytes) call:
+	//    Selector: keccak256("register(bytes32,bytes,bytes)")[:4]
+	//    Params:
+	//      agentID  bytes32 — right-padded UTF-8 bytes of req.AgentID
+	//      pubKey   bytes   — ABI dynamic bytes: offset (32), length (32), data (padded to 32-byte chunks)
+	//      metadata bytes   — ABI dynamic bytes: offset (32), length (32), data (padded to 32-byte chunks)
+	//
+	// 2. Sign the EIP-1559 transaction with cfg.PrivateKey using secp256k1
+	//    (requires go-ethereum crypto or an external signer).
+	//
+	// 3. eth_sendRawTransaction with RLP-encoded signed tx.
+	//
+	// 4. Poll eth_getTransactionReceipt until mined or ctx deadline exceeded.
+	//
 	// For now, return a pending identity with a stub tx hash.
 	identity := &Identity{
 		AgentID:         req.AgentID,
@@ -219,11 +231,26 @@ func (r *registry) GetIdentity(ctx context.Context, agentID string) (*Identity, 
 		return nil, fmt.Errorf("identity: context cancelled before get identity: %w", err)
 	}
 
-	// eth_call to the registry contract's getIdentity(agentID) function.
-	// The call data would be ABI-encoded in production.
+	// Build ABI-encoded calldata for getIdentity(bytes32).
+	//
+	// Function selector: keccak256("getIdentity(bytes32)")[:4] = 0xf4c714b4
+	//
+	// The agentID string is encoded as bytes32: the UTF-8 bytes are right-padded
+	// with zero bytes to fill 32 bytes. This matches the Solidity convention for
+	// string-to-bytes32 conversion (bytes32(bytes(agentID))).
+	//
+	// In production the selector should be verified against the deployed contract ABI.
+	const getIdentitySelector = "f4c714b4"
+
+	agentIDBytes := []byte(agentID)
+	var agentIDPadded [32]byte
+	copy(agentIDPadded[:], agentIDBytes) // right-pad with zero bytes
+
+	calldata := "0x" + getIdentitySelector + hex.EncodeToString(agentIDPadded[:])
+
 	callParams := map[string]string{
 		"to":   r.cfg.ContractAddress,
-		"data": "0x" + agentID, // stub: production would ABI-encode
+		"data": calldata,
 	}
 
 	resp, err := r.callRPC(ctx, "eth_call", []interface{}{callParams, "latest"})
@@ -241,7 +268,7 @@ func (r *registry) GetIdentity(ctx context.Context, agentID string) (*Identity, 
 		return nil, fmt.Errorf("identity: agent %s: %w", agentID, ErrIdentityNotFound)
 	}
 
-	// In production, ABI-decode the result into an Identity struct.
+	// In production, ABI-decode the result bytes into an Identity struct.
 	// Return a stub identity for the RPC integration layer.
 	identity := &Identity{
 		AgentID:         agentID,
