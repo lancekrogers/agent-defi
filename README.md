@@ -124,6 +124,22 @@ The trading strategy operates on a simple principle: prices tend to revert to th
 
 Signal confidence scales linearly with deviation magnitude (0.5 at threshold, 1.0 at 2x threshold). Position size scales proportionally with confidence.
 
+## P&L Summary
+
+The agent's economic model targets **~$12-16 net profit per trade** at the 2% mean reversion threshold with a $1000 position:
+
+| Component | Amount |
+|-----------|--------|
+| Revenue (2% deviation) | $20.00 |
+| Uniswap fee (0.3%) | -$3.00 |
+| Gas (Base L2) | -$0.01 |
+| Slippage (est.) | -$1-5 |
+| **Net per trade** | **~$12-16** |
+
+Base L2 gas costs are negligible (~$0.01 per `exactInputSingle` call), making the self-sustaining model viable even at conservative trading thresholds. The `IsSelfSustaining` flag in every HCS P&L report is computed as `NetPnL > 0`.
+
+For full economic analysis, break-even math, and verification steps, see [docs/pnl-proof.md](docs/pnl-proof.md).
+
 ## Quick Start
 
 ```bash
