@@ -69,7 +69,7 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("config: DEFI_AGENT_ID is required")
 	}
 
-	cfg.DaemonAddr = envOr("DEFI_DAEMON_ADDR", "localhost:9090")
+	cfg.DaemonAddr = envOr("DEFI_DAEMON_ADDR", "localhost:50051")
 	cfg.TradingInterval = parseDurationOrDefault(os.Getenv("DEFI_TRADING_INTERVAL"), 60*time.Second)
 	cfg.PnLReportInterval = parseDurationOrDefault(os.Getenv("DEFI_PNL_REPORT_INTERVAL"), 5*time.Minute)
 	cfg.HealthInterval = parseDurationOrDefault(os.Getenv("DEFI_HEALTH_INTERVAL"), 30*time.Second)

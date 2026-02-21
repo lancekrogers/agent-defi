@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lancekrogers/agent-coordinator-ethden-2026/pkg/daemon"
 	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/identity"
 	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/payment"
 	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/trading"
@@ -196,6 +197,7 @@ func testAgent(t *testing.T) (*Agent, *mockTransport) {
 	a := New(
 		testConfig(),
 		testLogger(),
+		daemon.Noop(),
 		defaultMockIdentity(),
 		&mockPayment{},
 		&mockExecutor{},
@@ -218,6 +220,7 @@ func TestAgent_Run_RegistersIdentity(t *testing.T) {
 	mockID := defaultMockIdentity()
 	a := New(
 		testConfig(), testLogger(),
+		daemon.Noop(),
 		mockID, &mockPayment{},
 		&mockExecutor{},
 		&mockStrategy{name: "s", maxPos: 1.0, signal: &trading.Signal{Type: trading.SignalHold}},
@@ -262,6 +265,7 @@ func TestAgent_Run_AlreadyRegistered(t *testing.T) {
 
 	a := New(
 		testConfig(), testLogger(),
+		daemon.Noop(),
 		mockID, &mockPayment{},
 		&mockExecutor{},
 		&mockStrategy{name: "s", maxPos: 1.0, signal: &trading.Signal{Type: trading.SignalHold}},
@@ -322,6 +326,7 @@ func TestProcessTrade_ExecuteFails(t *testing.T) {
 
 	a := New(
 		testConfig(), testLogger(),
+		daemon.Noop(),
 		defaultMockIdentity(), &mockPayment{},
 		&mockExecutor{executeErr: errors.New("trade failed")},
 		&mockStrategy{name: "s", maxPos: 1.0},
@@ -369,6 +374,7 @@ func TestTradingLoop_ExecutesStrategy(t *testing.T) {
 
 	a := New(
 		cfg, testLogger(),
+		daemon.Noop(),
 		defaultMockIdentity(), &mockPayment{},
 		&mockExecutor{},
 		strategy,
@@ -443,6 +449,7 @@ func TestRun_ReceivesAndProcessesTask(t *testing.T) {
 
 	a := New(
 		testConfig(), testLogger(),
+		daemon.Noop(),
 		defaultMockIdentity(), &mockPayment{},
 		&mockExecutor{},
 		&mockStrategy{
@@ -502,8 +509,8 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.AgentID != "test-defi-123" {
 		t.Errorf("expected test-defi-123, got %s", cfg.AgentID)
 	}
-	if cfg.DaemonAddr != "localhost:9090" {
-		t.Errorf("expected localhost:9090, got %s", cfg.DaemonAddr)
+	if cfg.DaemonAddr != "localhost:50051" {
+		t.Errorf("expected localhost:50051, got %s", cfg.DaemonAddr)
 	}
 	if cfg.HealthInterval != 30*time.Second {
 		t.Errorf("expected 30s, got %v", cfg.HealthInterval)

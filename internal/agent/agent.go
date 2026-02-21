@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lancekrogers/agent-coordinator-ethden-2026/pkg/daemon"
 	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/identity"
 	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/payment"
 	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/trading"
@@ -37,6 +38,7 @@ import (
 type Agent struct {
 	cfg      Config
 	log      *slog.Logger
+	daemon   daemon.DaemonClient
 	identity identity.IdentityRegistry
 	payment  payment.PaymentProtocol
 	strategy trading.Strategy
@@ -44,6 +46,7 @@ type Agent struct {
 	pnl      *trading.PnLTracker
 	handler  *hcs.Handler
 
+	daemonReg       *daemon.RegisterResponse
 	startTime       time.Time
 	completedTrades atomic.Int64
 	failedTrades    atomic.Int64
@@ -53,6 +56,7 @@ type Agent struct {
 func New(
 	cfg Config,
 	log *slog.Logger,
+	dc daemon.DaemonClient,
 	id identity.IdentityRegistry,
 	pay payment.PaymentProtocol,
 	executor trading.TradeExecutor,
@@ -63,6 +67,7 @@ func New(
 	return &Agent{
 		cfg:      cfg,
 		log:      log,
+		daemon:   dc,
 		identity: id,
 		payment:  pay,
 		strategy: strategy,
@@ -94,6 +99,20 @@ func (a *Agent) Run(ctx context.Context) error {
 		id = existing
 	}
 	a.log.Info("agent identity ready", "agent_id", id.AgentID, "tx", id.TxHash)
+
+	// Step 1.5: Register with daemon runtime (optional).
+	reg, regErr := a.daemon.Register(ctx, daemon.RegisterRequest{
+		AgentName:    a.cfg.AgentID,
+		AgentType:    "defi",
+		Capabilities: []string{"trading", "base", "erc8004", "x402", "erc8021"},
+	})
+	if regErr != nil {
+		a.log.Warn("daemon registration failed, running standalone", "error", regErr)
+		a.daemon = daemon.Noop()
+	} else {
+		a.daemonReg = reg
+		a.log.Info("registered with daemon", "agent_id", reg.AgentID, "session_id", reg.SessionID)
+	}
 
 	// Step 2: Start HCS subscription for incoming task assignments.
 	go func() {
@@ -179,7 +198,7 @@ func (a *Agent) pnlReportLoop(ctx context.Context) {
 	}
 }
 
-// healthLoop periodically publishes the agent's health status.
+// healthLoop periodically publishes the agent's health status and daemon heartbeat.
 func (a *Agent) healthLoop(ctx context.Context) {
 	ticker := time.NewTicker(a.cfg.HealthInterval)
 	defer ticker.Stop()
@@ -198,6 +217,16 @@ func (a *Agent) healthLoop(ctx context.Context) {
 				UptimeSeconds:  int64(time.Since(a.startTime).Seconds()),
 				TradeCount:     int(a.completedTrades.Load()),
 			})
+
+			// Daemon heartbeat on the same tick.
+			hbReq := daemon.HeartbeatRequest{Timestamp: time.Now()}
+			if a.daemonReg != nil {
+				hbReq.AgentID = a.daemonReg.AgentID
+				hbReq.SessionID = a.daemonReg.SessionID
+			}
+			if err := a.daemon.Heartbeat(ctx, hbReq); err != nil {
+				a.log.Warn("daemon heartbeat failed", "error", err)
+			}
 		}
 	}
 }

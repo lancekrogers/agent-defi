@@ -17,6 +17,7 @@ import (
 
 	hiero "github.com/hiero-ledger/hiero-sdk-go/v2/sdk"
 
+	"github.com/lancekrogers/agent-coordinator-ethden-2026/pkg/daemon"
 	"github.com/lancekrogers/agent-defi-ethden-2026/internal/agent"
 	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/attribution"
 	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/identity"
@@ -67,8 +68,12 @@ func main() {
 	cfg.HCS.Transport = transport
 	handler := hcs.NewHandler(cfg.HCS)
 
+	// Connect to daemon runtime (optional — agent works standalone if unavailable).
+	daemonClient := connectDaemon(log, cfg.DaemonAddr)
+	defer daemonClient.Close()
+
 	// Wire the agent with all dependencies.
-	a := agent.New(*cfg, log, idRegistry, pay, executor, strategy, pnl, handler)
+	a := agent.New(*cfg, log, daemonClient, idRegistry, pay, executor, strategy, pnl, handler)
 
 	log.Info("DeFi agent starting",
 		"agent_id", cfg.AgentID,
@@ -124,4 +129,16 @@ func (f *fallbackTransport) Publish(_ context.Context, topicID string, data []by
 
 func (f *fallbackTransport) Subscribe(_ context.Context, _ string) (<-chan []byte, <-chan error) {
 	return make(chan []byte), make(chan error)
+}
+
+func connectDaemon(log *slog.Logger, addr string) daemon.DaemonClient {
+	daemonCfg := daemon.DefaultConfig()
+	daemonCfg.Address = addr
+
+	client, err := daemon.NewGRPCClient(context.Background(), daemonCfg)
+	if err != nil {
+		log.Warn("daemon connection failed, running standalone", "error", err)
+		return daemon.Noop()
+	}
+	return client
 }
