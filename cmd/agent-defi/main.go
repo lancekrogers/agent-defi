@@ -15,6 +15,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	hiero "github.com/hiero-ledger/hiero-sdk-go/v2/sdk"
+
 	"github.com/lancekrogers/agent-defi-ethden-2026/internal/agent"
 	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/attribution"
 	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/identity"
@@ -60,14 +62,8 @@ func main() {
 	// Initialize P&L tracker.
 	pnl := trading.NewPnLTracker()
 
-	// HCS handler requires a transport implementation.
-	// In production, use the Hedera SDK transport.
-	// For now, use a stub transport that logs and no-ops.
-	var transport hcs.Transport
-	if transport == nil {
-		log.Warn("no HCS transport configured, using stub")
-		transport = &stubTransport{log: log}
-	}
+	// Initialize HCS transport with Hedera SDK.
+	transport := initHCSTransport(log)
 	cfg.HCS.Transport = transport
 	handler := hcs.NewHandler(cfg.HCS)
 
@@ -88,17 +84,44 @@ func main() {
 	log.Info("DeFi agent stopped gracefully")
 }
 
-// stubTransport is a no-op HCS transport for development when
-// no Hedera network is available. All publishes are logged and discarded.
-type stubTransport struct {
+func initHCSTransport(log *slog.Logger) hcs.Transport {
+	accountIDStr := os.Getenv("HEDERA_ACCOUNT_ID")
+	privateKeyStr := os.Getenv("HEDERA_PRIVATE_KEY")
+
+	if accountIDStr == "" || privateKeyStr == "" {
+		log.Warn("HEDERA_ACCOUNT_ID or HEDERA_PRIVATE_KEY not set, HCS transport disabled")
+		return &fallbackTransport{log: log}
+	}
+
+	accountID, err := hiero.AccountIDFromString(accountIDStr)
+	if err != nil {
+		log.Error("failed to parse HEDERA_ACCOUNT_ID", "error", err)
+		return &fallbackTransport{log: log}
+	}
+
+	privateKey, err := hiero.PrivateKeyFromString(privateKeyStr)
+	if err != nil {
+		log.Error("failed to parse HEDERA_PRIVATE_KEY", "error", err)
+		return &fallbackTransport{log: log}
+	}
+
+	hederaClient := hiero.ClientForTestnet()
+	hederaClient.SetOperator(accountID, privateKey)
+
+	log.Info("HCS transport initialized", "account_id", accountIDStr)
+	return hcs.NewHCSTransport(hcs.HCSTransportConfig{Client: hederaClient})
+}
+
+// fallbackTransport is a no-op HCS transport used when Hedera credentials are unavailable.
+type fallbackTransport struct {
 	log *slog.Logger
 }
 
-func (s *stubTransport) Publish(_ context.Context, topicID string, data []byte) error {
-	s.log.Debug("stub HCS publish", "topic", topicID, "bytes", len(data))
+func (f *fallbackTransport) Publish(_ context.Context, topicID string, data []byte) error {
+	f.log.Debug("fallback HCS publish", "topic", topicID, "bytes", len(data))
 	return nil
 }
 
-func (s *stubTransport) Subscribe(_ context.Context, _ string) (<-chan []byte, <-chan error) {
+func (f *fallbackTransport) Subscribe(_ context.Context, _ string) (<-chan []byte, <-chan error) {
 	return make(chan []byte), make(chan error)
 }
