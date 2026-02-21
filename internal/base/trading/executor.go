@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/attribution"
 )
 
 // TradeExecutor defines the interface for executing trades on a Base DEX.
@@ -46,6 +48,9 @@ type ExecutorConfig struct {
 
 	// OracleAddress is the address of the price oracle contract.
 	OracleAddress string
+
+	// Attribution is the ERC-8021 encoder for adding builder codes to calldata.
+	Attribution attribution.AttributionEncoder
 
 	// HTTPTimeout is the timeout for JSON-RPC calls.
 	HTTPTimeout time.Duration
@@ -96,12 +101,24 @@ func (e *executor) Execute(ctx context.Context, trade Trade) (*TradeResult, erro
 		return nil, fmt.Errorf("executor: chain unreachable: %w", ErrTradeFailed)
 	}
 
+	// Build the swap calldata (stub: real implementation would ABI-encode exactInputSingle).
+	calldata := []byte{0xa9, 0x05, 0x9c, 0xbb} // stub function selector
+
+	// Apply ERC-8021 builder attribution to calldata before signing.
+	if e.cfg.Attribution != nil {
+		attributed, err := e.cfg.Attribution.Encode(ctx, calldata)
+		if err != nil {
+			return nil, fmt.Errorf("executor: attribution encoding failed: %w", err)
+		}
+		calldata = attributed
+	}
+
 	// In production:
-	// 1. ABI-encode exactInputSingle(params) for Uniswap v3 router
-	// 2. Sign with PrivateKey
-	// 3. eth_sendRawTransaction
-	// 4. Poll eth_getTransactionReceipt
+	// 1. Sign the attributed calldata transaction with PrivateKey
+	// 2. eth_sendRawTransaction
+	// 3. Poll eth_getTransactionReceipt
 	// For now, return a stub result demonstrating the structure.
+	_ = calldata // used in production signing
 	txHash := "0x0000000000000000000000000000000000000000000000000000000000000001"
 
 	result := &TradeResult{

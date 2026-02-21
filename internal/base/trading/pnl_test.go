@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+// reportAll generates a report from the beginning of time to far in the future.
+func reportAll(tracker *PnLTracker) *PnLReport {
+	return tracker.Report(time.Time{}, time.Now().Add(24*time.Hour))
+}
+
 func testTradeRecord(revenue, cost float64, profitable bool) TradeRecord {
 	return TradeRecord{
 		TradeResult: TradeResult{
@@ -46,7 +51,7 @@ func TestPnLTracker_Report_BasicMetrics(t *testing.T) {
 		AmountUSD: 2.0,
 	})
 
-	report := tracker.Report()
+	report := reportAll(tracker)
 
 	if report.TradeCount != 3 {
 		t.Errorf("expected 3 trades, got %d", report.TradeCount)
@@ -80,7 +85,7 @@ func TestPnLTracker_WinRate(t *testing.T) {
 	tracker.RecordTrade(testTradeRecord(200, 150, true))
 	tracker.RecordTrade(testTradeRecord(30, 60, false))
 
-	report := tracker.Report()
+	report := reportAll(tracker)
 
 	expectedWinRate := 0.5 // 2 wins out of 4 trades
 	if report.WinRate != expectedWinRate {
@@ -100,7 +105,7 @@ func TestPnLTracker_IsSelfSustaining_True(t *testing.T) {
 		t.Error("expected self-sustaining to be true")
 	}
 
-	report := tracker.Report()
+	report := reportAll(tracker)
 	if !report.IsSelfSustaining {
 		t.Error("expected report IsSelfSustaining to be true")
 	}
@@ -124,7 +129,7 @@ func TestPnLTracker_IsSelfSustaining_False(t *testing.T) {
 func TestPnLTracker_EmptyReport(t *testing.T) {
 	tracker := NewPnLTracker()
 
-	report := tracker.Report()
+	report := reportAll(tracker)
 
 	if report.TradeCount != 0 {
 		t.Errorf("expected 0 trades, got %d", report.TradeCount)
@@ -138,12 +143,6 @@ func TestPnLTracker_EmptyReport(t *testing.T) {
 	if report.IsSelfSustaining {
 		t.Error("empty tracker should not be self-sustaining")
 	}
-	if report.PeriodStart.IsZero() {
-		t.Error("expected non-zero period start")
-	}
-	if report.PeriodEnd.IsZero() {
-		t.Error("expected non-zero period end")
-	}
 }
 
 func TestPnLTracker_NetPnL_Calculation(t *testing.T) {
@@ -154,7 +153,7 @@ func TestPnLTracker_NetPnL_Calculation(t *testing.T) {
 	tracker.RecordFee(Fee{AmountUSD: 10.0})               // fees: 10
 	// NetPnL = 500 - 25 - 10 = 465
 
-	report := tracker.Report()
+	report := reportAll(tracker)
 
 	expectedNet := 500.0 - 25.0 - 10.0
 	if report.NetPnL != expectedNet {
@@ -162,17 +161,51 @@ func TestPnLTracker_NetPnL_Calculation(t *testing.T) {
 	}
 }
 
-func TestPnLTracker_PeriodTimestamps(t *testing.T) {
-	before := time.Now()
+func TestPnLTracker_TimeFiltering(t *testing.T) {
 	tracker := NewPnLTracker()
 
-	report := tracker.Report()
+	// Record trades at different times.
+	early := time.Now().Add(-2 * time.Hour)
+	middle := time.Now().Add(-1 * time.Hour)
+	late := time.Now()
 
-	if report.PeriodStart.Before(before) {
-		t.Error("period start should not be before tracker creation")
+	tracker.RecordTrade(TradeRecord{
+		Revenue:    100,
+		Cost:       80,
+		PnL:        20,
+		RecordedAt: early,
+	})
+	tracker.RecordTrade(TradeRecord{
+		Revenue:    200,
+		Cost:       150,
+		PnL:        50,
+		RecordedAt: middle,
+	})
+	tracker.RecordTrade(TradeRecord{
+		Revenue:    300,
+		Cost:       250,
+		PnL:        50,
+		RecordedAt: late,
+	})
+
+	tracker.RecordGasCost(GasCost{CostUSD: 10, RecordedAt: early})
+	tracker.RecordGasCost(GasCost{CostUSD: 20, RecordedAt: middle})
+	tracker.RecordGasCost(GasCost{CostUSD: 30, RecordedAt: late})
+
+	// Report covering only the middle trade.
+	report := tracker.Report(
+		middle.Add(-time.Minute),
+		middle.Add(time.Minute),
+	)
+
+	if report.TradeCount != 1 {
+		t.Errorf("expected 1 trade in time window, got %d", report.TradeCount)
 	}
-	if report.PeriodEnd.Before(report.PeriodStart) {
-		t.Error("period end should not be before period start")
+	if report.TotalRevenue != 200 {
+		t.Errorf("expected revenue 200, got %.2f", report.TotalRevenue)
+	}
+	if report.TotalGasCosts != 20 {
+		t.Errorf("expected gas costs 20, got %.2f", report.TotalGasCosts)
 	}
 }
 
@@ -202,7 +235,7 @@ func TestPnLTracker_ConcurrentAccess(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < tradesPerRoutine; j++ {
-				_ = tracker.Report()
+				_ = reportAll(tracker)
 				_ = tracker.IsSelfSustaining()
 			}
 		}()
@@ -219,16 +252,12 @@ func TestPnLTracker_ConcurrentAccess(t *testing.T) {
 func TestPnLTracker_AutoTimestamp(t *testing.T) {
 	tracker := NewPnLTracker()
 
-	// Records without explicit timestamps should get auto-timestamped.
-	before := time.Now()
 	tracker.RecordTrade(TradeRecord{Revenue: 100})
 	tracker.RecordGasCost(GasCost{CostUSD: 5})
 	tracker.RecordFee(Fee{AmountUSD: 2})
 
-	// Just verify it doesn't panic and records correctly.
-	report := tracker.Report()
+	report := reportAll(tracker)
 	if report.TradeCount != 1 {
 		t.Errorf("expected 1 trade, got %d", report.TradeCount)
 	}
-	_ = before
 }

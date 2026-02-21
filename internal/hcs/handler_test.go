@@ -261,11 +261,12 @@ func TestPublishHealth_Success(t *testing.T) {
 	})
 
 	status := HealthStatus{
-		AgentID:         "defi-agent-1",
-		Status:          "trading",
-		ActiveStrategy:  "mean_reversion",
-		UptimeSeconds:   3600,
-		CompletedTrades: 5,
+		AgentID:        "defi-agent-1",
+		Status:         "trading",
+		ActiveStrategy: "mean_reversion",
+		UptimeSeconds:  3600,
+		TradeCount:     5,
+		CurrentPnL:     150.0,
 	}
 
 	err := h.PublishHealth(context.Background(), status)

@@ -99,19 +99,23 @@ func (t *PnLTracker) RecordFee(fee Fee) {
 	t.fees = append(t.fees, fee)
 }
 
-// Report generates a PnLReport summarizing all recorded activity.
+// Report generates a PnLReport summarizing recorded activity within the given
+// time period. Trades, gas costs, and fees recorded outside the window are excluded.
 // This method is safe for concurrent use.
-func (t *PnLTracker) Report() *PnLReport {
+func (t *PnLTracker) Report(from, to time.Time) *PnLReport {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	report := &PnLReport{
-		PeriodStart: t.started,
-		PeriodEnd:   time.Now(),
+		PeriodStart: from,
+		PeriodEnd:   to,
 	}
 
-	// Aggregate trade data.
+	// Aggregate trade data within the time window.
 	for _, trade := range t.trades {
+		if trade.RecordedAt.Before(from) || trade.RecordedAt.After(to) {
+			continue
+		}
 		report.TradeCount++
 		report.TotalRevenue += trade.Revenue
 		if trade.PnL > 0 {
@@ -121,13 +125,19 @@ func (t *PnLTracker) Report() *PnLReport {
 		}
 	}
 
-	// Aggregate gas costs.
+	// Aggregate gas costs within the time window.
 	for _, gc := range t.gas {
+		if gc.RecordedAt.Before(from) || gc.RecordedAt.After(to) {
+			continue
+		}
 		report.TotalGasCosts += gc.CostUSD
 	}
 
-	// Aggregate fees.
+	// Aggregate fees within the time window.
 	for _, fee := range t.fees {
+		if fee.RecordedAt.Before(from) || fee.RecordedAt.After(to) {
+			continue
+		}
 		report.TotalFees += fee.AmountUSD
 	}
 
@@ -142,11 +152,11 @@ func (t *PnLTracker) Report() *PnLReport {
 	return report
 }
 
-// IsSelfSustaining returns true when trading revenue exceeds all costs.
-// This is a quick check without generating a full report.
+// IsSelfSustaining returns true when trading revenue exceeds all costs
+// from the tracker's start time through now.
 // This method is safe for concurrent use.
 func (t *PnLTracker) IsSelfSustaining() bool {
-	return t.Report().IsSelfSustaining
+	return t.Report(t.started, time.Now()).IsSelfSustaining
 }
 
 // TradeCount returns the total number of recorded trades.

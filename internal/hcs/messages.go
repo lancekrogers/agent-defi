@@ -89,16 +89,17 @@ type TaskResult struct {
 
 // PnLReportMessage is published periodically to broadcast the agent's P&L status.
 type PnLReportMessage struct {
-	AgentID         string    `json:"agent_id"`
-	TotalRevenue    float64   `json:"total_revenue"`
-	TotalGasCosts   float64   `json:"total_gas_costs"`
-	TotalFees       float64   `json:"total_fees"`
-	NetPnL          float64   `json:"net_pnl"`
-	TradeCount      int       `json:"trade_count"`
-	WinRate         float64   `json:"win_rate"`
-	IsSelfSustaining bool     `json:"is_self_sustaining"`
-	PeriodStart     time.Time `json:"period_start"`
-	PeriodEnd       time.Time `json:"period_end"`
+	AgentID          string    `json:"agent_id"`
+	TotalRevenue     float64   `json:"total_revenue"`
+	TotalGasCosts    float64   `json:"total_gas_costs"`
+	TotalFees        float64   `json:"total_fees"`
+	NetPnL           float64   `json:"net_pnl"`
+	TradeCount       int       `json:"trade_count"`
+	WinRate          float64   `json:"win_rate"`
+	IsSelfSustaining bool      `json:"is_self_sustaining"`
+	PeriodStart      time.Time `json:"period_start"`
+	PeriodEnd        time.Time `json:"period_end"`
+	ActiveStrategy   string    `json:"active_strategy"`
 }
 
 // StrategyUpdate is published when the agent changes its active trading strategy.
@@ -111,12 +112,10 @@ type StrategyUpdate struct {
 
 // HealthStatus is published periodically to signal agent liveness and state.
 type HealthStatus struct {
-	AgentID          string  `json:"agent_id"`
-	Status           string  `json:"status"` // "idle", "trading", "error"
-	ActiveStrategy   string  `json:"active_strategy,omitempty"`
-	UptimeSeconds    int64   `json:"uptime_seconds"`
-	CompletedTrades  int     `json:"completed_trades"`
-	FailedTrades     int     `json:"failed_trades"`
-	IsSelfSustaining bool    `json:"is_self_sustaining"`
-	NetPnL           float64 `json:"net_pnl"`
+	AgentID        string  `json:"agent_id"`
+	Status         string  `json:"status"` // "idle", "trading", "error"
+	ActiveStrategy string  `json:"active_strategy,omitempty"`
+	CurrentPnL     float64 `json:"current_pnl"`
+	UptimeSeconds  int64   `json:"uptime_seconds"`
+	TradeCount     int     `json:"trade_count"`
 }

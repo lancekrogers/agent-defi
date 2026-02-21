@@ -121,8 +121,17 @@ type TradeResult struct {
 	Profitable bool
 }
 
+// PricePoint is a single price data point in the price history.
+type PricePoint struct {
+	Price     float64
+	Timestamp time.Time
+}
+
 // MarketState holds current market data for a trading pair.
 type MarketState struct {
+	// Pair is the trading pair identifier (e.g., "WETH/USDC").
+	Pair string
+
 	// TokenIn is the address of the input token.
 	TokenIn string
 
@@ -134,6 +143,9 @@ type MarketState struct {
 
 	// MovingAverage is the N-period simple moving average of Price.
 	MovingAverage float64
+
+	// PriceHistory is recent price data points for strategy evaluation.
+	PriceHistory []PricePoint
 
 	// Volume24h is the 24-hour trading volume in USD.
 	Volume24h float64

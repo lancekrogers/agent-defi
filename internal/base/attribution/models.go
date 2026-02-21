@@ -23,6 +23,9 @@ var (
 	// ErrInvalidBuilderCode is returned when a builder code is not exactly
 	// 20 bytes as required by ERC-8021.
 	ErrInvalidBuilderCode = errors.New("attribution: builder code must be exactly 20 bytes")
+
+	// ErrEncodingFailed is returned when attribution encoding fails.
+	ErrEncodingFailed = errors.New("attribution: failed to encode attribution")
 )
 
 const (
@@ -36,19 +39,33 @@ const (
 	AttributionMagic = "\x45\x52\x43\x38"
 )
 
-// Attribution holds an ERC-8021 builder attribution record extracted from
-// or to be appended to transaction calldata.
+// Attribution represents a decoded builder attribution from transaction calldata.
 type Attribution struct {
 	// BuilderCode is the 20-byte Ethereum address of the builder/agent.
-	// This is appended as the last 20 bytes of transaction calldata.
 	BuilderCode [20]byte
+
+	// BuilderName is the human-readable name of the builder (if registered).
+	BuilderName string
+
+	// Version is the attribution protocol version.
+	Version uint8
 
 	// Timestamp records when the attribution was embedded.
 	Timestamp time.Time
 
-	// TxHash is the transaction hash this attribution was embedded in,
-	// if known. May be empty before transaction submission.
+	// TxHash is the transaction hash this attribution was embedded in.
 	TxHash string
+}
+
+// Config holds configuration for the attribution encoder.
+type Config struct {
+	// BuilderCode is this agent's registered builder attribution code.
+	// This is a fixed-length byte sequence assigned by the Base builder registry.
+	BuilderCode [20]byte
+
+	// Enabled controls whether attribution is appended to calldata.
+	// Set to false to disable during testing or development.
+	Enabled bool
 }
 
 // BuilderCodeHex returns the builder code as a hex string with 0x prefix.

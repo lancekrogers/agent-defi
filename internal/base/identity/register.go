@@ -180,12 +180,16 @@ func (r *registry) Register(ctx context.Context, req RegistrationRequest) (*Iden
 	// 4. Poll for receipt via eth_getTransactionReceipt
 	// For now, return a pending identity with a stub tx hash.
 	identity := &Identity{
-		AgentID:      req.AgentID,
-		Status:       StatusPending,
-		PublicKey:    req.PublicKey,
-		Metadata:     req.Metadata,
-		TxHash:       "0x0000000000000000000000000000000000000000000000000000000000000001",
-		RegisteredAt: time.Now(),
+		AgentID:         req.AgentID,
+		AgentType:       req.AgentType,
+		ContractAddress: r.cfg.ContractAddress,
+		OwnerAddress:    req.OwnerAddress,
+		Status:          StatusPending,
+		PublicKey:       req.PublicKey,
+		Metadata:        req.Metadata,
+		TxHash:          "0x0000000000000000000000000000000000000000000000000000000000000001",
+		ChainID:         r.cfg.ChainID,
+		RegisteredAt:    time.Now(),
 	}
 
 	return identity, nil
@@ -240,8 +244,11 @@ func (r *registry) GetIdentity(ctx context.Context, agentID string) (*Identity, 
 	// In production, ABI-decode the result into an Identity struct.
 	// Return a stub identity for the RPC integration layer.
 	identity := &Identity{
-		AgentID: agentID,
-		Status:  StatusActive,
+		AgentID:         agentID,
+		ContractAddress: r.cfg.ContractAddress,
+		Status:          StatusActive,
+		IsVerified:      true,
+		ChainID:         r.cfg.ChainID,
 	}
 
 	return identity, nil

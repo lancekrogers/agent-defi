@@ -19,9 +19,17 @@ var (
 	// exist in the ERC-8004 registry.
 	ErrIdentityNotFound = errors.New("identity: agent identity not found")
 
+	// ErrRegistrationFailed is returned when the registration transaction
+	// fails on-chain (e.g., reverts, out of gas).
+	ErrRegistrationFailed = errors.New("identity: registration transaction failed")
+
 	// ErrChainUnreachable is returned when the Base Sepolia RPC endpoint
 	// cannot be reached or returns an error.
 	ErrChainUnreachable = errors.New("identity: Base chain RPC unreachable")
+
+	// ErrInsufficientFunds is returned when the agent's wallet has
+	// insufficient funds for the registration transaction gas.
+	ErrInsufficientFunds = errors.New("identity: insufficient funds for gas")
 )
 
 // IdentityStatus represents the on-chain registration state of an agent identity.
@@ -44,11 +52,17 @@ type RegistrationRequest struct {
 	// AgentID is the unique identifier for this agent instance.
 	AgentID string
 
+	// AgentType classifies the agent (e.g., "defi", "inference", "coordinator").
+	AgentType string
+
 	// PublicKey is the agent's public key for on-chain identity binding.
 	PublicKey []byte
 
 	// Metadata holds arbitrary key-value pairs stored with the identity.
 	Metadata map[string]string
+
+	// OwnerAddress is the Ethereum address that owns this identity.
+	OwnerAddress string
 
 	// AttributionCode is the ERC-8021 builder attribution code to embed.
 	AttributionCode string
@@ -59,8 +73,14 @@ type Identity struct {
 	// AgentID is the unique identifier for the registered agent.
 	AgentID string
 
-	// Owner is the Ethereum address that registered the identity.
-	Owner string
+	// AgentType classifies the agent (e.g., "defi", "inference", "coordinator").
+	AgentType string
+
+	// ContractAddress is the ERC-8004 contract where this identity is registered.
+	ContractAddress string
+
+	// OwnerAddress is the Ethereum address that owns this identity.
+	OwnerAddress string
 
 	// PublicKey is the agent's registered public key.
 	PublicKey []byte
@@ -68,11 +88,17 @@ type Identity struct {
 	// Status is the current on-chain status of this identity.
 	Status IdentityStatus
 
+	// IsVerified indicates whether the identity has been verified on-chain.
+	IsVerified bool
+
 	// Metadata holds the on-chain metadata key-value pairs.
 	Metadata map[string]string
 
 	// TxHash is the transaction hash of the registration transaction.
 	TxHash string
+
+	// ChainID is the chain where the identity is registered (84532 for Base Sepolia).
+	ChainID int64
 
 	// RegisteredAt is when the identity was registered on-chain.
 	RegisteredAt time.Time

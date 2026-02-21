@@ -16,6 +16,9 @@ import (
 	"syscall"
 
 	"github.com/lancekrogers/agent-defi-ethden-2026/internal/agent"
+	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/attribution"
+	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/identity"
+	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/payment"
 	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/trading"
 	"github.com/lancekrogers/agent-defi-ethden-2026/internal/hcs"
 )
@@ -34,17 +37,25 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// Initialize ERC-8004 identity registry.
+	idRegistry := identity.NewRegistry(cfg.Identity)
+
+	// Initialize x402 payment protocol.
+	pay := payment.NewProtocol(cfg.Payment)
+
+	// Initialize ERC-8021 attribution encoder and inject into trading config.
+	enc, err := attribution.NewEncoder(cfg.Attribution)
+	if err != nil {
+		log.Warn("attribution encoder disabled", "error", err)
+	} else {
+		cfg.Trading.Attribution = enc
+	}
+
 	// Initialize trading strategy.
 	strategy := trading.NewMeanReversionStrategy(cfg.StrategyConfig())
 
 	// Initialize trade executor for Base Sepolia.
-	executor := trading.NewExecutor(trading.ExecutorConfig{
-		RPCURL:           cfg.Base.RPCURL,
-		ChainID:          cfg.Base.ChainID,
-		WalletAddress:    cfg.Base.WalletAddress,
-		PrivateKey:       cfg.Base.PrivateKey,
-		DEXRouterAddress: cfg.Base.DEXRouterAddress,
-	})
+	executor := trading.NewExecutor(cfg.Trading)
 
 	// Initialize P&L tracker.
 	pnl := trading.NewPnLTracker()
@@ -57,15 +68,16 @@ func main() {
 		log.Warn("no HCS transport configured, using stub")
 		transport = &stubTransport{log: log}
 	}
-	handler := hcs.NewHandler(cfg.HCSHandler(transport))
+	cfg.HCS.Transport = transport
+	handler := hcs.NewHandler(cfg.HCS)
 
 	// Wire the agent with all dependencies.
-	a := agent.New(*cfg, log, strategy, executor, pnl, handler)
+	a := agent.New(*cfg, log, idRegistry, pay, executor, strategy, pnl, handler)
 
 	log.Info("DeFi agent starting",
 		"agent_id", cfg.AgentID,
-		"chain_id", cfg.Base.ChainID,
-		"rpc_url", cfg.Base.RPCURL,
+		"chain_id", cfg.Trading.ChainID,
+		"rpc_url", cfg.Trading.RPCURL,
 		"strategy", strategy.Name())
 
 	if err := a.Run(ctx); err != nil && err != context.Canceled {

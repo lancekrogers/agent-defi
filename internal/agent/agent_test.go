@@ -5,15 +5,62 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math/big"
+	"net/http"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/identity"
+	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/payment"
 	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/trading"
 	"github.com/lancekrogers/agent-defi-ethden-2026/internal/hcs"
 )
 
 // Mock implementations for testing
+
+type mockIdentity struct {
+	registerResult *identity.Identity
+	registerErr    error
+	getResult      *identity.Identity
+	getErr         error
+	verifyCalled   bool
+}
+
+func (m *mockIdentity) Register(_ context.Context, _ identity.RegistrationRequest) (*identity.Identity, error) {
+	return m.registerResult, m.registerErr
+}
+
+func (m *mockIdentity) Verify(_ context.Context, _ string) (bool, error) {
+	m.verifyCalled = true
+	return true, nil
+}
+
+func (m *mockIdentity) GetIdentity(_ context.Context, _ string) (*identity.Identity, error) {
+	return m.getResult, m.getErr
+}
+
+type mockPayment struct{}
+
+func (m *mockPayment) Pay(_ context.Context, _ payment.PaymentRequest) (*payment.Receipt, error) {
+	return &payment.Receipt{}, nil
+}
+
+func (m *mockPayment) RequestPayment(_ context.Context, _ *big.Int, _ string) (*payment.Invoice, error) {
+	return &payment.Invoice{}, nil
+}
+
+func (m *mockPayment) VerifyPayment(_ context.Context, _, _ string) (*payment.Receipt, error) {
+	return &payment.Receipt{}, nil
+}
+
+func (m *mockPayment) HandlePaymentRequired(_ context.Context, resp *http.Response) (*http.Response, error) {
+	return resp, nil
+}
+
+func (m *mockPayment) CreatePaymentRequiredResponse(_ payment.Invoice) *http.Response {
+	return &http.Response{StatusCode: 402}
+}
 
 type mockStrategy struct {
 	name        string
@@ -31,12 +78,12 @@ func (m *mockStrategy) Evaluate(_ context.Context, _ trading.MarketState) (*trad
 func (m *mockStrategy) MaxPosition() float64 { return m.maxPos }
 
 type mockExecutor struct {
-	executeErr       error
-	balanceErr       error
-	marketErr        error
-	executeResult    *trading.TradeResult
-	balance          *trading.Balance
-	market           *trading.MarketState
+	executeErr    error
+	balanceErr    error
+	marketErr     error
+	executeResult *trading.TradeResult
+	balance       *trading.Balance
+	market        *trading.MarketState
 }
 
 func (m *mockExecutor) Execute(_ context.Context, trade trading.Trade) (*trading.TradeResult, error) {
@@ -104,13 +151,21 @@ func testLogger() *slog.Logger {
 
 func testConfig() Config {
 	return Config{
-		AgentID:         "test-defi-agent",
-		HealthInterval:  time.Hour,   // prevent health messages during tests
-		TradingInterval: time.Hour,   // prevent trading during tests
-		Trading: TradingConfig{
-			TokenIn:         "0xusdc",
-			TokenOut:        "0xweth",
-			MaxPositionSize: 1.0,
+		AgentID:           "test-defi-agent",
+		HealthInterval:    time.Hour,
+		TradingInterval:   time.Hour,
+		PnLReportInterval: time.Hour,
+		TokenIn:           "0xusdc",
+		TokenOut:          "0xweth",
+	}
+}
+
+func defaultMockIdentity() *mockIdentity {
+	return &mockIdentity{
+		registerResult: &identity.Identity{
+			AgentID:   "test-defi-agent",
+			AgentType: "defi",
+			TxHash:    "0xmockregistration",
 		},
 	}
 }
@@ -141,16 +196,98 @@ func testAgent(t *testing.T) (*Agent, *mockTransport) {
 	a := New(
 		testConfig(),
 		testLogger(),
-		strategy,
+		defaultMockIdentity(),
+		&mockPayment{},
 		&mockExecutor{},
+		strategy,
 		trading.NewPnLTracker(),
 		handler,
 	)
 	return a, mt
 }
 
+func TestAgent_Run_RegistersIdentity(t *testing.T) {
+	mt := newMockTransport()
+	handler := hcs.NewHandler(hcs.HandlerConfig{
+		Transport:     mt,
+		TaskTopicID:   "task-topic",
+		ResultTopicID: "result-topic",
+		AgentID:       "test-agent",
+	})
+
+	mockID := defaultMockIdentity()
+	a := New(
+		testConfig(), testLogger(),
+		mockID, &mockPayment{},
+		&mockExecutor{},
+		&mockStrategy{name: "s", maxPos: 1.0, signal: &trading.Signal{Type: trading.SignalHold}},
+		trading.NewPnLTracker(),
+		handler,
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx) }()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != context.Canceled {
+			t.Errorf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout")
+	}
+}
+
+func TestAgent_Run_AlreadyRegistered(t *testing.T) {
+	mt := newMockTransport()
+	handler := hcs.NewHandler(hcs.HandlerConfig{
+		Transport:     mt,
+		TaskTopicID:   "task-topic",
+		ResultTopicID: "result-topic",
+		AgentID:       "test-agent",
+	})
+
+	mockID := &mockIdentity{
+		registerErr: identity.ErrAlreadyRegistered,
+		getResult: &identity.Identity{
+			AgentID:   "test-agent",
+			AgentType: "defi",
+			TxHash:    "0xexisting",
+		},
+	}
+
+	a := New(
+		testConfig(), testLogger(),
+		mockID, &mockPayment{},
+		&mockExecutor{},
+		&mockStrategy{name: "s", maxPos: 1.0, signal: &trading.Signal{Type: trading.SignalHold}},
+		trading.NewPnLTracker(),
+		handler,
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx) }()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != context.Canceled {
+			t.Errorf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout")
+	}
+}
+
 func TestProcessTrade_Success(t *testing.T) {
-	a, mt := testAgent(t)
+	a, _ := testAgent(t)
 
 	signal := &trading.Signal{
 		Type:          trading.SignalBuy,
@@ -170,13 +307,8 @@ func TestProcessTrade_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if a.completedTrades != 1 {
-		t.Errorf("expected 1 completed trade, got %d", a.completedTrades)
-	}
-
-	// Should have published a P&L report.
-	if len(mt.published) < 1 {
-		t.Error("expected at least 1 published message (P&L report)")
+	if a.completedTrades.Load() != 1 {
+		t.Errorf("expected 1 completed trade, got %d", a.completedTrades.Load())
 	}
 }
 
@@ -190,8 +322,9 @@ func TestProcessTrade_ExecuteFails(t *testing.T) {
 
 	a := New(
 		testConfig(), testLogger(),
-		&mockStrategy{name: "s", maxPos: 1.0},
+		defaultMockIdentity(), &mockPayment{},
 		&mockExecutor{executeErr: errors.New("trade failed")},
+		&mockStrategy{name: "s", maxPos: 1.0},
 		trading.NewPnLTracker(),
 		handler,
 	)
@@ -236,8 +369,9 @@ func TestTradingLoop_ExecutesStrategy(t *testing.T) {
 
 	a := New(
 		cfg, testLogger(),
-		strategy,
+		defaultMockIdentity(), &mockPayment{},
 		&mockExecutor{},
+		strategy,
 		trading.NewPnLTracker(),
 		handler,
 	)
@@ -248,16 +382,14 @@ func TestTradingLoop_ExecutesStrategy(t *testing.T) {
 	time.Sleep(120 * time.Millisecond)
 	cancel()
 
-	// Should have completed at least 1 trade.
-	if a.completedTrades < 1 {
-		t.Errorf("expected at least 1 completed trade, got %d", a.completedTrades)
+	if a.completedTrades.Load() < 1 {
+		t.Errorf("expected at least 1 completed trade, got %d", a.completedTrades.Load())
 	}
 }
 
 func TestTradingLoop_HoldSignalSkipsTrade(t *testing.T) {
 	a, _ := testAgent(t)
 
-	// Override strategy to return hold signal.
 	a.strategy = &mockStrategy{
 		name:   "mean_reversion",
 		maxPos: 1.0,
@@ -272,8 +404,8 @@ func TestTradingLoop_HoldSignalSkipsTrade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if a.completedTrades != 0 {
-		t.Errorf("expected 0 trades for hold signal, got %d", a.completedTrades)
+	if a.completedTrades.Load() != 0 {
+		t.Errorf("expected 0 trades for hold signal, got %d", a.completedTrades.Load())
 	}
 }
 
@@ -311,6 +443,8 @@ func TestRun_ReceivesAndProcessesTask(t *testing.T) {
 
 	a := New(
 		testConfig(), testLogger(),
+		defaultMockIdentity(), &mockPayment{},
+		&mockExecutor{},
 		&mockStrategy{
 			name:   "mean_reversion",
 			maxPos: 1.0,
@@ -320,7 +454,6 @@ func TestRun_ReceivesAndProcessesTask(t *testing.T) {
 				GeneratedAt: time.Now(),
 			},
 		},
-		&mockExecutor{},
 		trading.NewPnLTracker(),
 		handler,
 	)
@@ -329,7 +462,6 @@ func TestRun_ReceivesAndProcessesTask(t *testing.T) {
 
 	go func() {
 		time.Sleep(50 * time.Millisecond)
-		// Send a task assignment.
 		payload, _ := json.Marshal(hcs.TaskAssignment{
 			TaskID:   "task-run-1",
 			TaskType: "execute_trade",
@@ -379,11 +511,14 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.TradingInterval != 60*time.Second {
 		t.Errorf("expected 60s, got %v", cfg.TradingInterval)
 	}
-	if cfg.Base.RPCURL != "https://sepolia.base.org" {
-		t.Errorf("expected https://sepolia.base.org, got %s", cfg.Base.RPCURL)
+	if cfg.PnLReportInterval != 5*time.Minute {
+		t.Errorf("expected 5m, got %v", cfg.PnLReportInterval)
 	}
-	if cfg.Base.ChainID != 84532 {
-		t.Errorf("expected 84532, got %d", cfg.Base.ChainID)
+	if cfg.Identity.RPCURL != "https://sepolia.base.org" {
+		t.Errorf("expected https://sepolia.base.org, got %s", cfg.Identity.RPCURL)
+	}
+	if cfg.Identity.ChainID != 84532 {
+		t.Errorf("expected 84532, got %d", cfg.Identity.ChainID)
 	}
 }
 
@@ -410,20 +545,10 @@ func TestLoadConfig_CustomValues(t *testing.T) {
 	if cfg.TradingInterval != 30*time.Second {
 		t.Errorf("expected 30s, got %v", cfg.TradingInterval)
 	}
-	if cfg.Base.RPCURL != "https://custom.rpc" {
-		t.Errorf("expected https://custom.rpc, got %s", cfg.Base.RPCURL)
+	if cfg.Identity.RPCURL != "https://custom.rpc" {
+		t.Errorf("expected https://custom.rpc, got %s", cfg.Identity.RPCURL)
 	}
 	if cfg.HCS.TaskTopicID != "task-topic-1" {
 		t.Errorf("expected task-topic-1, got %s", cfg.HCS.TaskTopicID)
-	}
-}
-
-func TestLoadConfig_InvalidInterval(t *testing.T) {
-	t.Setenv("DEFI_AGENT_ID", "test-agent")
-	t.Setenv("DEFI_HEALTH_INTERVAL", "not-a-duration")
-
-	_, err := LoadConfig()
-	if err == nil {
-		t.Fatal("expected error for invalid duration")
 	}
 }

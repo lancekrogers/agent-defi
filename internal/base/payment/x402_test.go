@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -28,7 +30,7 @@ func testProtocol(t *testing.T, rpcHandler http.HandlerFunc) (PaymentProtocol, *
 // balanceHandler returns an eth_getBalance RPC response.
 func balanceHandler(balanceHex string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		resp := map[string]interface{}{
+		resp := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
 			"result":  balanceHex,
@@ -38,11 +40,10 @@ func balanceHandler(balanceHex string) http.HandlerFunc {
 }
 
 func TestPay_Success(t *testing.T) {
-	// Handler that returns a high balance for eth_getBalance.
 	callCount := 0
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		resp := map[string]interface{}{
+		resp := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
 			"result":  "0xde0b6b3a7640000", // 1 ETH in wei (hex)
@@ -53,10 +54,9 @@ func TestPay_Success(t *testing.T) {
 	p, _ := testProtocol(t, handler)
 
 	req := PaymentRequest{
-		InvoiceID: "inv-001",
-		Recipient: "0xrecipient",
-		AmountWei: "0x38d7ea4c68000", // 0.001 ETH
-		Network:   84532,
+		InvoiceID:        "inv-001",
+		RecipientAddress: "0xrecipient",
+		Amount:           big.NewInt(1000000000000000), // 0.001 ETH
 	}
 
 	receipt, err := p.Pay(context.Background(), req)
@@ -72,17 +72,18 @@ func TestPay_Success(t *testing.T) {
 	if receipt.ProofHeader == "" {
 		t.Error("expected non-empty proof header")
 	}
+	if receipt.GasCost == nil || receipt.GasCost.Sign() <= 0 {
+		t.Error("expected positive gas cost in receipt")
+	}
 }
 
 func TestPay_InsufficientFunds(t *testing.T) {
-	// Return a very low balance.
 	p, _ := testProtocol(t, balanceHandler("0x1")) // 1 wei
 
 	req := PaymentRequest{
-		InvoiceID: "inv-002",
-		Recipient: "0xrecipient",
-		AmountWei: "0xde0b6b3a7640000", // 1 ETH
-		Network:   84532,
+		InvoiceID:        "inv-002",
+		RecipientAddress: "0xrecipient",
+		Amount:           big.NewInt(1e18), // 1 ETH
 	}
 
 	_, err := p.Pay(context.Background(), req)
@@ -94,6 +95,55 @@ func TestPay_InsufficientFunds(t *testing.T) {
 	}
 }
 
+func TestPay_GasTooHigh(t *testing.T) {
+	// Return a high gas price.
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		var reqBody map[string]any
+		json.NewDecoder(r.Body).Decode(&reqBody)
+		method := reqBody["method"].(string)
+
+		var result string
+		switch method {
+		case "eth_gasPrice":
+			result = "0x174876e800" // 100 gwei
+		default:
+			result = "0xde0b6b3a7640000" // 1 ETH balance
+		}
+
+		resp := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result":  result,
+		}
+		json.NewEncoder(w).Encode(resp)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(handler))
+	t.Cleanup(srv.Close)
+
+	p := NewProtocol(ProtocolConfig{
+		RPCURL:        srv.URL,
+		ChainID:       84532,
+		WalletAddress: "0xabcdef1234567890",
+		MaxGasPrice:   big.NewInt(1e9), // 1 gwei max
+		HTTPTimeout:   5 * time.Second,
+	})
+
+	req := PaymentRequest{
+		InvoiceID:        "inv-003",
+		RecipientAddress: "0xrecipient",
+		Amount:           big.NewInt(1000),
+	}
+
+	_, err := p.Pay(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for gas too high")
+	}
+	if !errors.Is(err, ErrGasTooHigh) {
+		t.Errorf("expected ErrGasTooHigh, got %v", err)
+	}
+}
+
 func TestPay_InvalidInvoice(t *testing.T) {
 	tests := []struct {
 		name string
@@ -101,19 +151,15 @@ func TestPay_InvalidInvoice(t *testing.T) {
 	}{
 		{
 			name: "missing InvoiceID",
-			req:  PaymentRequest{Recipient: "0xr", AmountWei: "0x1"},
+			req:  PaymentRequest{RecipientAddress: "0xr", Amount: big.NewInt(1)},
 		},
 		{
-			name: "missing Recipient",
-			req:  PaymentRequest{InvoiceID: "inv-1", AmountWei: "0x1"},
+			name: "missing RecipientAddress",
+			req:  PaymentRequest{InvoiceID: "inv-1", Amount: big.NewInt(1)},
 		},
 		{
 			name: "missing Amount",
-			req:  PaymentRequest{InvoiceID: "inv-1", Recipient: "0xr"},
-		},
-		{
-			name: "network mismatch",
-			req:  PaymentRequest{InvoiceID: "inv-1", Recipient: "0xr", AmountWei: "0x1", Network: 1},
+			req:  PaymentRequest{InvoiceID: "inv-1", RecipientAddress: "0xr"},
 		},
 	}
 
@@ -134,14 +180,15 @@ func TestPay_InvalidInvoice(t *testing.T) {
 
 func TestVerify_Success(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
-		resp := map[string]interface{}{
+		resp := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
-			"result": map[string]interface{}{
+			"result": map[string]any{
 				"status":      "0x1",
 				"blockNumber": "0x12345",
 				"from":        "0xsender",
 				"to":          "0xrecipient",
+				"gasUsed":     "0x5208",
 			},
 		}
 		json.NewEncoder(w).Encode(resp)
@@ -159,9 +206,12 @@ func TestVerify_Success(t *testing.T) {
 	if receipt.TxHash != "0xtxhash" {
 		t.Errorf("expected 0xtxhash, got %s", receipt.TxHash)
 	}
+	if receipt.InvoiceID != "inv-001" {
+		t.Errorf("expected inv-001, got %s", receipt.InvoiceID)
+	}
 }
 
-func TestVerify_InvalidInvoice(t *testing.T) {
+func TestVerify_InvalidProof(t *testing.T) {
 	tests := []struct {
 		name      string
 		invoiceID string
@@ -179,8 +229,8 @@ func TestVerify_InvalidInvoice(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			if !errors.Is(err, ErrInvalidInvoice) {
-				t.Errorf("expected ErrInvalidInvoice, got %v", err)
+			if !errors.Is(err, ErrInvalidProof) {
+				t.Errorf("expected ErrInvalidProof, got %v", err)
 			}
 		})
 	}
@@ -194,14 +244,14 @@ func TestContextCancelled(t *testing.T) {
 		{
 			name: "Pay",
 			fn: func(ctx context.Context, p PaymentProtocol) error {
-				_, err := p.Pay(ctx, PaymentRequest{InvoiceID: "i", Recipient: "r", AmountWei: "0x1"})
+				_, err := p.Pay(ctx, PaymentRequest{InvoiceID: "i", RecipientAddress: "r", Amount: big.NewInt(1)})
 				return err
 			},
 		},
 		{
 			name: "RequestPayment",
 			fn: func(ctx context.Context, p PaymentProtocol) error {
-				_, err := p.RequestPayment(ctx, "0x1", "test")
+				_, err := p.RequestPayment(ctx, big.NewInt(1), "test")
 				return err
 			},
 		},
@@ -241,18 +291,19 @@ func TestRequestPayment_Success(t *testing.T) {
 		WalletAddress: "0xmyaddress",
 	})
 
-	invoice, err := p.RequestPayment(context.Background(), "0x38d7ea4c68000", "test compute")
+	amount := big.NewInt(1000000000000000) // 0.001 ETH
+	invoice, err := p.RequestPayment(context.Background(), amount, "test compute")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if invoice == nil {
 		t.Fatal("expected invoice, got nil")
 	}
-	if invoice.PayTo != "0xmyaddress" {
-		t.Errorf("expected 0xmyaddress, got %s", invoice.PayTo)
+	if invoice.RecipientAddress != "0xmyaddress" {
+		t.Errorf("expected 0xmyaddress, got %s", invoice.RecipientAddress)
 	}
-	if invoice.AmountWei != "0x38d7ea4c68000" {
-		t.Errorf("expected 0x38d7ea4c68000, got %s", invoice.AmountWei)
+	if invoice.Amount.Cmp(amount) != 0 {
+		t.Errorf("expected %s, got %s", amount.String(), invoice.Amount.String())
 	}
 	if invoice.Network != 84532 {
 		t.Errorf("expected 84532, got %d", invoice.Network)
@@ -261,3 +312,99 @@ func TestRequestPayment_Success(t *testing.T) {
 		t.Error("invoice should not be expired immediately")
 	}
 }
+
+func TestHandlePaymentRequired_FullFlow(t *testing.T) {
+	// Mock RPC that returns high balance and gas price.
+	rpcHandler := func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result":  "0xde0b6b3a7640000", // 1 ETH
+		}
+		json.NewEncoder(w).Encode(resp)
+	}
+
+	p, _ := testProtocol(t, rpcHandler)
+
+	// Create a 402 response with a payment envelope.
+	envelope := PaymentEnvelope{
+		Version:          "1",
+		Network:          "base-sepolia",
+		RecipientAddress: "0xrecipient",
+		Amount:           "1000000000000000",
+		Token:            "ETH",
+		Expiry:           time.Now().Add(5 * time.Minute).Unix(),
+	}
+	envData, _ := json.Marshal(envelope)
+
+	resp := &http.Response{
+		StatusCode: http.StatusPaymentRequired,
+		Body:       http.NoBody,
+	}
+	resp.Body = newReadCloser(envData)
+
+	result, err := p.HandlePaymentRequired(context.Background(), resp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected response, got nil")
+	}
+	if result.Header.Get("X-Payment-Proof") == "" {
+		t.Error("expected X-Payment-Proof header")
+	}
+	if result.Header.Get("X-Payment-TxHash") == "" {
+		t.Error("expected X-Payment-TxHash header")
+	}
+}
+
+func TestCreatePaymentRequiredResponse(t *testing.T) {
+	p := NewProtocol(ProtocolConfig{
+		RPCURL:        "http://localhost:9999",
+		ChainID:       84532,
+		WalletAddress: "0xmyaddress",
+	})
+
+	invoice := Invoice{
+		InvoiceID:        "inv-test",
+		RecipientAddress: "0xrecipient",
+		Amount:           big.NewInt(1e15),
+		Token:            "ETH",
+		ExpiresAt:        time.Now().Add(5 * time.Minute),
+	}
+
+	resp := p.CreatePaymentRequiredResponse(invoice)
+	if resp.StatusCode != http.StatusPaymentRequired {
+		t.Errorf("expected 402, got %d", resp.StatusCode)
+	}
+
+	var envelope PaymentEnvelope
+	json.NewDecoder(resp.Body).Decode(&envelope)
+	if envelope.RecipientAddress != "0xrecipient" {
+		t.Errorf("expected 0xrecipient, got %s", envelope.RecipientAddress)
+	}
+	if envelope.Version != "1" {
+		t.Errorf("expected version 1, got %s", envelope.Version)
+	}
+}
+
+// newReadCloser creates an io.ReadCloser from bytes.
+func newReadCloser(data []byte) *readCloser {
+	return &readCloser{data: data, pos: 0}
+}
+
+type readCloser struct {
+	data []byte
+	pos  int
+}
+
+func (rc *readCloser) Read(p []byte) (int, error) {
+	if rc.pos >= len(rc.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, rc.data[rc.pos:])
+	rc.pos += n
+	return n, nil
+}
+
+func (rc *readCloser) Close() error { return nil }

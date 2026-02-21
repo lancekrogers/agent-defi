@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"time"
 )
@@ -26,16 +27,26 @@ type PaymentProtocol interface {
 	// Pay executes an x402 payment for the given request.
 	// Returns ErrInsufficientFunds if wallet balance is too low.
 	// Returns ErrPaymentFailed if the transaction fails on-chain.
+	// Returns ErrGasTooHigh if gas price exceeds MaxGasPrice safety limit.
 	Pay(ctx context.Context, req PaymentRequest) (*Receipt, error)
 
 	// RequestPayment generates an Invoice for a resource access request.
 	// This is used when acting as the resource server side of x402.
-	RequestPayment(ctx context.Context, amountWei string, description string) (*Invoice, error)
+	RequestPayment(ctx context.Context, amount *big.Int, description string) (*Invoice, error)
 
 	// VerifyPayment checks that a payment proof corresponds to a valid
 	// on-chain transaction and returns the verified Receipt.
-	// Returns ErrInvalidInvoice if the proof is malformed.
+	// Returns ErrInvalidProof if the proof is invalid.
 	VerifyPayment(ctx context.Context, invoiceID string, txHash string) (*Receipt, error)
+
+	// HandlePaymentRequired processes an HTTP 402 response, extracts the
+	// payment envelope, makes the payment, and retries the request with
+	// proof of payment.
+	HandlePaymentRequired(ctx context.Context, resp *http.Response) (*http.Response, error)
+
+	// CreatePaymentRequiredResponse builds an HTTP 402 response with the
+	// payment envelope for the requested resource.
+	CreatePaymentRequiredResponse(invoice Invoice) *http.Response
 }
 
 // ProtocolConfig holds configuration for the x402 payment protocol.
@@ -51,6 +62,13 @@ type ProtocolConfig struct {
 
 	// PrivateKey is the hex-encoded private key for signing transactions.
 	PrivateKey string
+
+	// DefaultToken is the default token for payments (e.g., USDC address).
+	DefaultToken string
+
+	// MaxGasPrice is the maximum gas price the agent will pay (safety limit).
+	// If nil, no safety limit is enforced.
+	MaxGasPrice *big.Int
 
 	// HTTPTimeout is the timeout for HTTP calls to resource servers.
 	HTTPTimeout time.Duration
@@ -86,13 +104,24 @@ func (p *protocol) Pay(ctx context.Context, req PaymentRequest) (*Receipt, error
 		return nil, fmt.Errorf("payment: context cancelled before pay: %w", err)
 	}
 
-	if req.InvoiceID == "" || req.Recipient == "" || req.AmountWei == "" {
+	if req.InvoiceID == "" || req.RecipientAddress == "" || req.Amount == nil {
 		return nil, fmt.Errorf("payment: %w: missing required fields", ErrInvalidInvoice)
 	}
 
-	if req.Network != 0 && req.Network != p.cfg.ChainID {
-		return nil, fmt.Errorf("payment: %w: network mismatch, expected %d got %d",
-			ErrInvalidInvoice, p.cfg.ChainID, req.Network)
+	if !req.Deadline.IsZero() && time.Now().After(req.Deadline) {
+		return nil, fmt.Errorf("payment: %w", ErrInvoiceExpired)
+	}
+
+	// Check gas price against safety limit.
+	if p.cfg.MaxGasPrice != nil {
+		gasPrice, err := p.getGasPrice(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("payment: failed to check gas price: %w", err)
+		}
+		if gasPrice.Cmp(p.cfg.MaxGasPrice) > 0 {
+			return nil, fmt.Errorf("payment: gas price %s exceeds max %s: %w",
+				gasPrice.String(), p.cfg.MaxGasPrice.String(), ErrGasTooHigh)
+		}
 	}
 
 	// Check wallet balance via JSON-RPC before attempting payment.
@@ -101,53 +130,47 @@ func (p *protocol) Pay(ctx context.Context, req PaymentRequest) (*Receipt, error
 		return nil, fmt.Errorf("payment: failed to check balance: %w", err)
 	}
 
-	if !hasSufficientFunds(balance, req.AmountWei) {
+	if balance.Cmp(req.Amount) < 0 {
 		return nil, fmt.Errorf("payment: wallet %s: %w", p.cfg.WalletAddress, ErrInsufficientFunds)
 	}
 
 	// In production, sign and submit the transaction here.
-	// For the x402 handshake layer, we construct the proof header.
 	txHash := "0x0000000000000000000000000000000000000000000000000000000000000001"
+	gasCost := big.NewInt(21000 * 1e9) // stub gas cost
 
 	receipt := &Receipt{
+		ReceiptID:   fmt.Sprintf("rcpt-%d", time.Now().UnixNano()),
 		InvoiceID:   req.InvoiceID,
 		TxHash:      txHash,
-		AmountWei:   req.AmountWei,
-		Sender:      p.cfg.WalletAddress,
-		Recipient:   req.Recipient,
-		Network:     p.cfg.ChainID,
+		Amount:      req.Amount,
+		Token:       req.Token,
 		PaidAt:      time.Now(),
+		GasCost:     gasCost,
 		ProofHeader: fmt.Sprintf("base:%s:%s", req.InvoiceID, txHash),
-	}
-
-	// Notify the resource server of payment via callback if provided.
-	if req.PaymentURL != "" {
-		if err := p.notifyPayment(ctx, req.PaymentURL, receipt); err != nil {
-			return nil, fmt.Errorf("payment: callback notification failed: %w", err)
-		}
 	}
 
 	return receipt, nil
 }
 
 // RequestPayment creates an Invoice for agents requesting access to a resource.
-func (p *protocol) RequestPayment(ctx context.Context, amountWei string, description string) (*Invoice, error) {
+func (p *protocol) RequestPayment(ctx context.Context, amount *big.Int, description string) (*Invoice, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("payment: context cancelled before request payment: %w", err)
 	}
 
-	if amountWei == "" {
-		return nil, fmt.Errorf("payment: %w: amount cannot be empty", ErrInvalidInvoice)
+	if amount == nil || amount.Sign() <= 0 {
+		return nil, fmt.Errorf("payment: %w: amount must be positive", ErrInvalidInvoice)
 	}
 
 	invoice := &Invoice{
-		InvoiceID:   fmt.Sprintf("inv-%d", time.Now().UnixNano()),
-		PayTo:       p.cfg.WalletAddress,
-		AmountWei:   amountWei,
-		Network:     p.cfg.ChainID,
-		Description: description,
-		ExpiresAt:   time.Now().Add(5 * time.Minute),
-		CallbackURL: fmt.Sprintf("%s/payment/confirm", p.cfg.RPCURL),
+		InvoiceID:          fmt.Sprintf("inv-%d", time.Now().UnixNano()),
+		RecipientAddress:   p.cfg.WalletAddress,
+		Amount:             amount,
+		Token:              p.cfg.DefaultToken,
+		Network:            p.cfg.ChainID,
+		ServiceDescription: description,
+		ExpiresAt:          time.Now().Add(5 * time.Minute),
+		PaymentEndpoint:    fmt.Sprintf("%s/payment/confirm", p.cfg.RPCURL),
 	}
 
 	return invoice, nil
@@ -160,72 +183,103 @@ func (p *protocol) VerifyPayment(ctx context.Context, invoiceID string, txHash s
 	}
 
 	if invoiceID == "" || txHash == "" {
-		return nil, fmt.Errorf("payment: %w: invoiceID and txHash are required", ErrInvalidInvoice)
+		return nil, fmt.Errorf("payment: %w: invoiceID and txHash are required", ErrInvalidProof)
 	}
 
-	// Verify transaction via eth_getTransactionReceipt.
 	receipt, err := p.getTransactionReceipt(ctx, txHash)
 	if err != nil {
 		return nil, fmt.Errorf("payment: failed to verify tx %s: %w", txHash, err)
 	}
 
+	receipt.InvoiceID = invoiceID
 	return receipt, nil
 }
 
-// getBalance fetches the ETH balance for an address via eth_getBalance.
-func (p *protocol) getBalance(ctx context.Context, address string) (string, error) {
-	reqBody := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "eth_getBalance",
-		"params":  []interface{}{address, "latest"},
-		"id":      1,
+// HandlePaymentRequired processes an HTTP 402 response, extracts the payment
+// envelope, makes the payment, and returns a retried response with proof.
+func (p *protocol) HandlePaymentRequired(ctx context.Context, resp *http.Response) (*http.Response, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("payment: context cancelled before handling 402: %w", err)
 	}
 
-	data, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", fmt.Errorf("payment: marshal error: %w", err)
+	if resp.StatusCode != http.StatusPaymentRequired {
+		return resp, nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.cfg.RPCURL, bytes.NewReader(data))
-	if err != nil {
-		return "", fmt.Errorf("payment: request create error: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("payment: RPC call failed: %w", ErrPaymentFailed)
-	}
-	defer resp.Body.Close()
-
+	// Parse the PaymentEnvelope from the 402 response body.
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("payment: failed to read balance response: %w", err)
+		return nil, fmt.Errorf("payment: failed to read 402 body: %w", err)
+	}
+	resp.Body.Close()
+
+	var envelope PaymentEnvelope
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, fmt.Errorf("payment: failed to parse payment envelope: %w", ErrInvalidInvoice)
 	}
 
-	var rpcResp struct {
-		Result string `json:"result"`
-		Error  *struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(body, &rpcResp); err != nil {
-		return "", fmt.Errorf("payment: failed to decode balance response: %w", err)
+	// Validate the envelope.
+	if envelope.Expiry > 0 && time.Now().Unix() > envelope.Expiry {
+		return nil, fmt.Errorf("payment: %w", ErrInvoiceExpired)
 	}
 
-	if rpcResp.Error != nil {
-		return "", fmt.Errorf("payment: RPC error: %s", rpcResp.Error.Message)
+	amount := new(big.Int)
+	if _, ok := amount.SetString(envelope.Amount, 10); !ok {
+		return nil, fmt.Errorf("payment: %w: invalid amount in envelope", ErrInvalidInvoice)
 	}
 
-	return rpcResp.Result, nil
+	// Make the on-chain payment.
+	receipt, err := p.Pay(ctx, PaymentRequest{
+		RecipientAddress: envelope.RecipientAddress,
+		Amount:           amount,
+		Token:            envelope.Token,
+		InvoiceID:        fmt.Sprintf("x402-%d", time.Now().UnixNano()),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("payment: 402 handshake payment failed: %w", err)
+	}
+
+	// Build a response indicating successful payment.
+	proofResp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{},
+		Body:       io.NopCloser(bytes.NewReader(nil)),
+	}
+	proofResp.Header.Set("X-Payment-Proof", receipt.ProofHeader)
+	proofResp.Header.Set("X-Payment-TxHash", receipt.TxHash)
+
+	return proofResp, nil
 }
 
-// getTransactionReceipt fetches a tx receipt via eth_getTransactionReceipt.
-func (p *protocol) getTransactionReceipt(ctx context.Context, txHash string) (*Receipt, error) {
-	reqBody := map[string]interface{}{
+// CreatePaymentRequiredResponse builds an HTTP 402 response with the
+// payment envelope for the requested resource.
+func (p *protocol) CreatePaymentRequiredResponse(invoice Invoice) *http.Response {
+	envelope := PaymentEnvelope{
+		Version:          "1",
+		Network:          "base-sepolia",
+		RecipientAddress: invoice.RecipientAddress,
+		Amount:           invoice.Amount.String(),
+		Token:            invoice.Token,
+		Expiry:           invoice.ExpiresAt.Unix(),
+	}
+
+	data, _ := json.Marshal(envelope)
+
+	return &http.Response{
+		StatusCode: http.StatusPaymentRequired,
+		Header: http.Header{
+			"Content-Type": {"application/json"},
+		},
+		Body: io.NopCloser(bytes.NewReader(data)),
+	}
+}
+
+// getBalance fetches the ETH balance for an address via eth_getBalance.
+func (p *protocol) getBalance(ctx context.Context, address string) (*big.Int, error) {
+	reqBody := map[string]any{
 		"jsonrpc": "2.0",
-		"method":  "eth_getTransactionReceipt",
-		"params":  []interface{}{txHash},
+		"method":  "eth_getBalance",
+		"params":  []any{address, "latest"},
 		"id":      1,
 	}
 
@@ -242,7 +296,95 @@ func (p *protocol) getTransactionReceipt(ctx context.Context, txHash string) (*R
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("payment: RPC call failed: %w", ErrPaymentFailed)
+		return nil, fmt.Errorf("payment: RPC call failed: %w", ErrChainUnreachable)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("payment: failed to read balance response: %w", err)
+	}
+
+	var rpcResp struct {
+		Result string `json:"result"`
+		Error  *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &rpcResp); err != nil {
+		return nil, fmt.Errorf("payment: failed to decode balance response: %w", err)
+	}
+
+	if rpcResp.Error != nil {
+		return nil, fmt.Errorf("payment: RPC error: %s", rpcResp.Error.Message)
+	}
+
+	balance := new(big.Int)
+	balance.SetString(rpcResp.Result, 0) // handles 0x prefix
+	return balance, nil
+}
+
+// getGasPrice fetches the current gas price via eth_gasPrice.
+func (p *protocol) getGasPrice(ctx context.Context) (*big.Int, error) {
+	reqBody := map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "eth_gasPrice",
+		"params":  []any{},
+		"id":      1,
+	}
+
+	data, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("payment: marshal error: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.cfg.RPCURL, bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("payment: request create error: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("payment: RPC call failed: %w", ErrChainUnreachable)
+	}
+	defer resp.Body.Close()
+
+	var rpcResp struct {
+		Result string `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+		return nil, fmt.Errorf("payment: failed to decode gas price: %w", err)
+	}
+
+	gasPrice := new(big.Int)
+	gasPrice.SetString(rpcResp.Result, 0)
+	return gasPrice, nil
+}
+
+// getTransactionReceipt fetches a tx receipt via eth_getTransactionReceipt.
+func (p *protocol) getTransactionReceipt(ctx context.Context, txHash string) (*Receipt, error) {
+	reqBody := map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "eth_getTransactionReceipt",
+		"params":  []any{txHash},
+		"id":      1,
+	}
+
+	data, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("payment: marshal error: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.cfg.RPCURL, bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("payment: request create error: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("payment: RPC call failed: %w", ErrChainUnreachable)
 	}
 	defer resp.Body.Close()
 
@@ -252,6 +394,7 @@ func (p *protocol) getTransactionReceipt(ctx context.Context, txHash string) (*R
 			BlockNumber string `json:"blockNumber"`
 			From        string `json:"from"`
 			To          string `json:"to"`
+			GasUsed     string `json:"gasUsed"`
 		} `json:"result"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
@@ -266,58 +409,14 @@ func (p *protocol) getTransactionReceipt(ctx context.Context, txHash string) (*R
 		return nil, fmt.Errorf("payment: tx %s reverted: %w", txHash, ErrPaymentFailed)
 	}
 
+	gasCost := new(big.Int)
+	gasCost.SetString(rpcResp.Result.GasUsed, 0)
+
 	receipt := &Receipt{
-		TxHash:    txHash,
-		Sender:    rpcResp.Result.From,
-		Recipient: rpcResp.Result.To,
-		Network:   p.cfg.ChainID,
-		PaidAt:    time.Now(),
+		TxHash:  txHash,
+		PaidAt:  time.Now(),
+		GasCost: gasCost,
 	}
 
 	return receipt, nil
-}
-
-// notifyPayment POSTs the payment receipt to the resource server callback.
-func (p *protocol) notifyPayment(ctx context.Context, callbackURL string, receipt *Receipt) error {
-	data, err := json.Marshal(receipt)
-	if err != nil {
-		return fmt.Errorf("payment: marshal receipt: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, callbackURL, bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("payment: create callback request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("payment: callback failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("payment: callback returned status %d", resp.StatusCode)
-	}
-
-	return nil
-}
-
-// hasSufficientFunds compares hex-encoded wei amounts.
-// Returns true if balance >= required (simple length-based comparison for hex strings).
-func hasSufficientFunds(balanceHex, requiredHex string) bool {
-	// Strip 0x prefix for comparison.
-	clean := func(s string) string {
-		if len(s) > 2 && s[:2] == "0x" {
-			return s[2:]
-		}
-		return s
-	}
-	b := clean(balanceHex)
-	r := clean(requiredHex)
-
-	if len(b) != len(r) {
-		return len(b) > len(r)
-	}
-	return b >= r
 }
