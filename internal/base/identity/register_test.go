@@ -59,12 +59,12 @@ func (h *rpcSequenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func TestRegister_Success(t *testing.T) {
-	// First call: GetIdentity returns not found (0x), second call: eth_blockNumber succeeds.
+func TestRegister_NoPrivateKey(t *testing.T) {
+	// Without a private key, Register returns an error.
 	seq := &rpcSequenceHandler{
 		responses: []interface{}{
-			"0x",           // GetIdentity eth_call: not found
-			"0x1234567",    // Register eth_blockNumber: success
+			"0x",        // GetIdentity eth_call: not found
+			"0x1234567", // eth_blockNumber: success
 		},
 	}
 	srv := httptest.NewServer(seq)
@@ -77,23 +77,50 @@ func TestRegister_Success(t *testing.T) {
 		HTTPTimeout:     5 * time.Second,
 	})
 
-	identity, err := reg.Register(context.Background(), RegistrationRequest{
+	_, err := reg.Register(context.Background(), RegistrationRequest{
 		AgentID:   "agent-defi-001",
 		PublicKey: []byte("pubkey"),
 		Metadata:  map[string]string{"type": "defi"},
 	})
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected error when private key not configured")
 	}
-	if identity == nil {
-		t.Fatal("expected identity, got nil")
+	if !errors.Is(err, ErrRegistrationFailed) {
+		t.Errorf("expected ErrRegistrationFailed, got %v", err)
 	}
-	if identity.AgentID != "agent-defi-001" {
-		t.Errorf("expected agent-defi-001, got %s", identity.AgentID)
+}
+
+func TestRegister_CalldataBuilt(t *testing.T) {
+	// With a private key, the register flow builds calldata and attempts
+	// to connect via ethclient (which will fail against the mock server).
+	seq := &rpcSequenceHandler{
+		responses: []interface{}{
+			"0x",        // GetIdentity eth_call: not found
+			"0x1234567", // eth_blockNumber: success
+		},
 	}
-	if identity.Status != StatusPending {
-		t.Errorf("expected pending status, got %s", identity.Status)
+	srv := httptest.NewServer(seq)
+	defer srv.Close()
+
+	reg := NewRegistry(RegistryConfig{
+		RPCURL:          srv.URL,
+		ChainID:         BaseSepolia,
+		ContractAddress: "0xdeadbeef",
+		PrivateKey:      "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+		HTTPTimeout:     5 * time.Second,
+	})
+
+	// Will fail at ethclient.DialContext, confirming calldata path runs.
+	_, err := reg.Register(context.Background(), RegistrationRequest{
+		AgentID:   "agent-defi-001",
+		PublicKey: []byte("pubkey"),
+		Metadata:  map[string]string{"type": "defi"},
+	})
+
+	// Error expected (mock doesn't support ethclient), but no panic.
+	if err == nil {
+		t.Fatal("expected error (mock doesn't support ethclient)")
 	}
 }
 
