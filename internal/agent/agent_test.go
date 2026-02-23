@@ -41,10 +41,15 @@ func (m *mockIdentity) GetIdentity(_ context.Context, _ string) (*identity.Ident
 	return m.getResult, m.getErr
 }
 
-type mockPayment struct{}
+type mockPayment struct {
+	payCalls int
+	lastReq  payment.PaymentRequest
+}
 
-func (m *mockPayment) Pay(_ context.Context, _ payment.PaymentRequest) (*payment.Receipt, error) {
-	return &payment.Receipt{}, nil
+func (m *mockPayment) Pay(_ context.Context, req payment.PaymentRequest) (*payment.Receipt, error) {
+	m.payCalls++
+	m.lastReq = req
+	return &payment.Receipt{TxHash: "0xx402mock", GasCost: big.NewInt(21000)}, nil
 }
 
 func (m *mockPayment) RequestPayment(_ context.Context, _ *big.Int, _ string) (*payment.Invoice, error) {
@@ -526,6 +531,66 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	}
 	if cfg.Identity.ChainID != 84532 {
 		t.Errorf("expected 84532, got %d", cfg.Identity.ChainID)
+	}
+}
+
+func TestTradingCycle_CallsX402Payment(t *testing.T) {
+	mt := newMockTransport()
+	handler := hcs.NewHandler(hcs.HandlerConfig{
+		Transport:     mt,
+		ResultTopicID: "result-topic",
+		AgentID:       "test-agent",
+	})
+
+	mockPay := &mockPayment{}
+	cfg := testConfig()
+	cfg.MarketDataRecipient = "0xdataProvider"
+	cfg.MarketDataCostWei = "1000000000000000"
+
+	a := New(
+		cfg, testLogger(),
+		daemon.Noop(),
+		defaultMockIdentity(), mockPay,
+		&mockExecutor{},
+		&mockStrategy{
+			name:   "mean_reversion",
+			maxPos: 1.0,
+			signal: &trading.Signal{Type: trading.SignalHold, GeneratedAt: time.Now()},
+		},
+		trading.NewPnLTracker(),
+		handler,
+	)
+
+	err := a.executeTradingCycle(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mockPay.payCalls != 1 {
+		t.Errorf("expected 1 x402 Pay call, got %d", mockPay.payCalls)
+	}
+	if mockPay.lastReq.RecipientAddress != "0xdataProvider" {
+		t.Errorf("expected recipient 0xdataProvider, got %s", mockPay.lastReq.RecipientAddress)
+	}
+
+	// Verify fee was recorded in P&L.
+	report := a.pnl.Report(time.Now().Add(-time.Minute), time.Now())
+	if report.TotalFees <= 0 {
+		t.Error("expected x402 fee to appear in P&L report")
+	}
+}
+
+func TestTradingCycle_SkipsX402WhenNotConfigured(t *testing.T) {
+	a, _ := testAgent(t)
+
+	// MarketDataRecipient is empty by default in testConfig.
+	mockPay := a.payment.(*mockPayment)
+	err := a.executeTradingCycle(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mockPay.payCalls != 0 {
+		t.Errorf("expected 0 x402 Pay calls when not configured, got %d", mockPay.payCalls)
 	}
 }
 

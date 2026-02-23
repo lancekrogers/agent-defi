@@ -6,9 +6,8 @@
 // registry contract. Other agents and contracts can then verify identity provenance
 // by querying the registry.
 //
-// The registry struct uses raw JSON-RPC calls (eth_call, eth_sendRawTransaction)
-// to interact with the ERC-8004 registry contract without requiring a heavy
-// go-ethereum dependency in the binary.
+// The registry struct uses go-ethereum's ABI encoder for calldata construction
+// and ethutil.SignAndSend for transaction signing and submission.
 package identity
 
 import (
@@ -19,6 +18,10 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/ethutil"
 )
 
 const (
@@ -174,23 +177,49 @@ func (r *registry) Register(ctx context.Context, req RegistrationRequest) (*Iden
 		return nil, fmt.Errorf("identity: chain unreachable during register: %w", ErrChainUnreachable)
 	}
 
-	// Production registration steps:
-	//
-	// 1. ABI-encode the register(bytes32, bytes, bytes) call:
-	//    Selector: keccak256("register(bytes32,bytes,bytes)")[:4]
-	//    Params:
-	//      agentID  bytes32 — right-padded UTF-8 bytes of req.AgentID
-	//      pubKey   bytes   — ABI dynamic bytes: offset (32), length (32), data (padded to 32-byte chunks)
-	//      metadata bytes   — ABI dynamic bytes: offset (32), length (32), data (padded to 32-byte chunks)
-	//
-	// 2. Sign the EIP-1559 transaction with cfg.PrivateKey using secp256k1
-	//    (requires go-ethereum crypto or an external signer).
-	//
-	// 3. eth_sendRawTransaction with RLP-encoded signed tx.
-	//
-	// 4. Poll eth_getTransactionReceipt until mined or ctx deadline exceeded.
-	//
-	// For now, return a pending identity with a stub tx hash.
+	if r.cfg.PrivateKey == "" {
+		return nil, fmt.Errorf("identity: %w: private key not configured", ErrRegistrationFailed)
+	}
+
+	// ABI-encode the register(bytes32,bytes,bytes) call using go-ethereum's ABI encoder.
+	registerABI, err := abi.JSON(bytes.NewReader([]byte(`[{"name":"register","type":"function","inputs":[{"name":"agentId","type":"bytes32"},{"name":"pubKey","type":"bytes"},{"name":"metadata","type":"bytes"}]}]`)))
+	if err != nil {
+		return nil, fmt.Errorf("identity: parse register ABI: %w", err)
+	}
+
+	// Encode agentID as bytes32 (right-padded UTF-8).
+	var agentIDPadded [32]byte
+	copy(agentIDPadded[:], []byte(req.AgentID))
+
+	// Serialize metadata to JSON bytes for the dynamic bytes param.
+	metadataBytes, err := json.Marshal(req.Metadata)
+	if err != nil {
+		return nil, fmt.Errorf("identity: marshal metadata: %w", err)
+	}
+
+	calldata, err := registerABI.Pack("register", agentIDPadded, req.PublicKey, metadataBytes)
+	if err != nil {
+		return nil, fmt.Errorf("identity: ABI-encode register call: %w", err)
+	}
+
+	// Sign and submit via go-ethereum.
+	key, err := ethutil.LoadKey(r.cfg.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("identity: load signing key: %w", err)
+	}
+
+	client, err := ethutil.DialClient(ctx, r.cfg.RPCURL)
+	if err != nil {
+		return nil, fmt.Errorf("identity: dial rpc: %w", err)
+	}
+	defer client.Close()
+
+	contract := common.HexToAddress(r.cfg.ContractAddress)
+	txHash, _, err := ethutil.SignAndSend(ctx, client, key, r.cfg.ChainID, contract, calldata, nil)
+	if err != nil {
+		return nil, fmt.Errorf("identity: register tx failed: %w", err)
+	}
+
 	identity := &Identity{
 		AgentID:         req.AgentID,
 		AgentType:       req.AgentType,
@@ -199,7 +228,7 @@ func (r *registry) Register(ctx context.Context, req RegistrationRequest) (*Iden
 		Status:          StatusPending,
 		PublicKey:       req.PublicKey,
 		Metadata:        req.Metadata,
-		TxHash:          "0x0000000000000000000000000000000000000000000000000000000000000001",
+		TxHash:          txHash.Hex(),
 		ChainID:         r.cfg.ChainID,
 		RegisteredAt:    time.Now(),
 	}
@@ -225,7 +254,7 @@ func (r *registry) Verify(ctx context.Context, agentID string) (bool, error) {
 }
 
 // GetIdentity retrieves the on-chain identity record for an agent via eth_call.
-// In production this would ABI-decode the result from the registry contract.
+// The result bytes are ABI-decoded as (uint8 status, bytes metadata, bytes signature).
 func (r *registry) GetIdentity(ctx context.Context, agentID string) (*Identity, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("identity: context cancelled before get identity: %w", err)
@@ -268,15 +297,83 @@ func (r *registry) GetIdentity(ctx context.Context, agentID string) (*Identity, 
 		return nil, fmt.Errorf("identity: agent %s: %w", agentID, ErrIdentityNotFound)
 	}
 
-	// In production, ABI-decode the result bytes into an Identity struct.
-	// Return a stub identity for the RPC integration layer.
+	return r.decodeIdentity(agentID, result)
+}
+
+// decodeIdentity ABI-decodes a hex-encoded eth_call result into an Identity.
+// Expected ABI output: (uint8 status, bytes metadata, bytes signature).
+// Status 0 is treated as not-registered; 1 = active; 2 = revoked.
+func (r *registry) decodeIdentity(agentID, hexResult string) (*Identity, error) {
+	if len(hexResult) < 4 || hexResult[:2] != "0x" {
+		return nil, fmt.Errorf("identity: invalid hex result for agent %s", agentID)
+	}
+
+	data, err := hex.DecodeString(hexResult[2:])
+	if err != nil {
+		return nil, fmt.Errorf("identity: hex decode failed for agent %s: %w", agentID, err)
+	}
+
+	parsed, err := abi.JSON(bytes.NewReader([]byte(`[{
+		"name": "getIdentity",
+		"type": "function",
+		"inputs": [{"name": "agentId", "type": "bytes32"}],
+		"outputs": [
+			{"name": "status", "type": "uint8"},
+			{"name": "metadata", "type": "bytes"},
+			{"name": "signature", "type": "bytes"}
+		]
+	}]`)))
+	if err != nil {
+		return nil, fmt.Errorf("identity: parse getIdentity ABI: %w", err)
+	}
+
+	outputs, err := parsed.Methods["getIdentity"].Outputs.Unpack(data)
+	if err != nil {
+		return nil, fmt.Errorf("identity: ABI decode failed for agent %s: %w", agentID, err)
+	}
+
+	if len(outputs) < 3 {
+		return nil, fmt.Errorf("identity: unexpected output count %d for agent %s", len(outputs), agentID)
+	}
+
+	status, _ := outputs[0].(uint8)
+	metadataBytes, _ := outputs[1].([]byte)
+	signatureBytes, _ := outputs[2].([]byte)
+
+	// Status 0 means the agent is not registered on-chain.
+	if status == 0 {
+		return nil, fmt.Errorf("identity: agent %s: %w", agentID, ErrIdentityNotFound)
+	}
+
 	identity := &Identity{
 		AgentID:         agentID,
 		ContractAddress: r.cfg.ContractAddress,
-		Status:          StatusActive,
-		IsVerified:      true,
+		Status:          statusFromUint8(status),
+		IsVerified:      status == 1,
+		PublicKey:        signatureBytes,
 		ChainID:         r.cfg.ChainID,
+	}
+
+	// Metadata is stored as JSON-encoded bytes on-chain.
+	if len(metadataBytes) > 0 {
+		var meta map[string]string
+		if jsonErr := json.Unmarshal(metadataBytes, &meta); jsonErr == nil {
+			identity.Metadata = meta
+		}
 	}
 
 	return identity, nil
 }
+
+// statusFromUint8 maps an on-chain uint8 status to IdentityStatus.
+func statusFromUint8(s uint8) IdentityStatus {
+	switch s {
+	case 1:
+		return StatusActive
+	case 2:
+		return StatusRevoked
+	default:
+		return StatusPending
+	}
+}
+

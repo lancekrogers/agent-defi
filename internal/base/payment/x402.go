@@ -19,6 +19,9 @@ import (
 	"math/big"
 	"net/http"
 	"time"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/lancekrogers/agent-defi-ethden-2026/internal/base/ethutil"
 )
 
 // PaymentProtocol defines the x402 machine-to-machine payment operations.
@@ -134,19 +137,39 @@ func (p *protocol) Pay(ctx context.Context, req PaymentRequest) (*Receipt, error
 		return nil, fmt.Errorf("payment: wallet %s: %w", p.cfg.WalletAddress, ErrInsufficientFunds)
 	}
 
-	// In production, sign and submit the transaction here.
-	txHash := "0x0000000000000000000000000000000000000000000000000000000000000001"
-	gasCost := big.NewInt(21000 * 1e9) // stub gas cost
+	// Sign and submit the payment transaction via go-ethereum.
+	if p.cfg.PrivateKey == "" {
+		return nil, fmt.Errorf("payment: %w: private key not configured", ErrPaymentFailed)
+	}
+
+	key, err := ethutil.LoadKey(p.cfg.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("payment: load signing key: %w", err)
+	}
+
+	client, err := ethutil.DialClient(ctx, p.cfg.RPCURL)
+	if err != nil {
+		return nil, fmt.Errorf("payment: dial rpc: %w", err)
+	}
+	defer client.Close()
+
+	recipient := common.HexToAddress(req.RecipientAddress)
+	txHashResult, txReceipt, err := ethutil.SignAndSend(ctx, client, key, p.cfg.ChainID, recipient, nil, req.Amount)
+	if err != nil {
+		return nil, fmt.Errorf("payment: tx failed: %w", ErrPaymentFailed)
+	}
+
+	gasCost := new(big.Int).SetUint64(txReceipt.GasUsed)
 
 	receipt := &Receipt{
 		ReceiptID:   fmt.Sprintf("rcpt-%d", time.Now().UnixNano()),
 		InvoiceID:   req.InvoiceID,
-		TxHash:      txHash,
+		TxHash:      txHashResult.Hex(),
 		Amount:      req.Amount,
 		Token:       req.Token,
 		PaidAt:      time.Now(),
 		GasCost:     gasCost,
-		ProofHeader: fmt.Sprintf("base:%s:%s", req.InvoiceID, txHash),
+		ProofHeader: fmt.Sprintf("base:%s:%s", req.InvoiceID, txHashResult.Hex()),
 	}
 
 	return receipt, nil

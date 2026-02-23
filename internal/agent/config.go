@@ -49,6 +49,14 @@ type Config struct {
 
 	// TokenOut is the address of the token to buy (e.g., WETH on Base Sepolia).
 	TokenOut string
+
+	// MarketDataRecipient is the x402 payment recipient for market data access.
+	// When set, the agent pays this address before each market data fetch.
+	MarketDataRecipient string
+
+	// MarketDataCostWei is the x402 payment amount per market data request in wei.
+	// Defaults to 1000000000000000 (0.001 ETH).
+	MarketDataCostWei string
 }
 
 // StrategyConfig builds a MeanReversionConfig from the agent's trading config.
@@ -108,6 +116,10 @@ func LoadConfig() (*Config, error) {
 	// Trading pair.
 	cfg.TokenIn = envOr("DEFI_TOKEN_IN", "0x036CbD53842c5426634e7929541eC2318f3dCF7e")  // USDC on Base Sepolia
 	cfg.TokenOut = envOr("DEFI_TOKEN_OUT", "0x4200000000000000000000000000000000000006") // WETH on Base Sepolia
+
+	// x402 market data payment.
+	cfg.MarketDataRecipient = os.Getenv("DEFI_MARKET_DATA_RECIPIENT")
+	cfg.MarketDataCostWei = envOr("DEFI_MARKET_DATA_COST_WEI", "1000000000000000") // 0.001 ETH
 
 	return cfg, nil
 }

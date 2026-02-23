@@ -39,10 +39,8 @@ func balanceHandler(balanceHex string) http.HandlerFunc {
 	}
 }
 
-func TestPay_Success(t *testing.T) {
-	callCount := 0
+func TestPay_NoPrivateKey(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
-		callCount++
 		resp := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
@@ -59,21 +57,13 @@ func TestPay_Success(t *testing.T) {
 		Amount:           big.NewInt(1000000000000000), // 0.001 ETH
 	}
 
-	receipt, err := p.Pay(context.Background(), req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	// Without a private key configured, Pay returns an error after balance check.
+	_, err := p.Pay(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error when private key not configured")
 	}
-	if receipt == nil {
-		t.Fatal("expected receipt, got nil")
-	}
-	if receipt.InvoiceID != "inv-001" {
-		t.Errorf("expected inv-001, got %s", receipt.InvoiceID)
-	}
-	if receipt.ProofHeader == "" {
-		t.Error("expected non-empty proof header")
-	}
-	if receipt.GasCost == nil || receipt.GasCost.Sign() <= 0 {
-		t.Error("expected positive gas cost in receipt")
+	if !errors.Is(err, ErrPaymentFailed) {
+		t.Errorf("expected ErrPaymentFailed, got %v", err)
 	}
 }
 
@@ -313,8 +303,8 @@ func TestRequestPayment_Success(t *testing.T) {
 	}
 }
 
-func TestHandlePaymentRequired_FullFlow(t *testing.T) {
-	// Mock RPC that returns high balance and gas price.
+func TestHandlePaymentRequired_NoKey(t *testing.T) {
+	// Mock RPC that returns high balance.
 	rpcHandler := func(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]any{
 			"jsonrpc": "2.0",
@@ -339,22 +329,13 @@ func TestHandlePaymentRequired_FullFlow(t *testing.T) {
 
 	resp := &http.Response{
 		StatusCode: http.StatusPaymentRequired,
-		Body:       http.NoBody,
+		Body:       newReadCloser(envData),
 	}
-	resp.Body = newReadCloser(envData)
 
-	result, err := p.HandlePaymentRequired(context.Background(), resp)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected response, got nil")
-	}
-	if result.Header.Get("X-Payment-Proof") == "" {
-		t.Error("expected X-Payment-Proof header")
-	}
-	if result.Header.Get("X-Payment-TxHash") == "" {
-		t.Error("expected X-Payment-TxHash header")
+	// Without a private key, the payment fails after parsing the envelope.
+	_, err := p.HandlePaymentRequired(context.Background(), resp)
+	if err == nil {
+		t.Fatal("expected error when private key not configured")
 	}
 }
 

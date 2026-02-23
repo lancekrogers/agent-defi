@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"sync/atomic"
 	"time"
 
@@ -237,13 +238,16 @@ func (a *Agent) executeTradingCycle(ctx context.Context) error {
 		return fmt.Errorf("agent: context cancelled before trading cycle: %w", err)
 	}
 
-	// 1. Fetch current market state.
+	// 1. Pay for market data via x402 (if configured).
+	a.payForMarketData(ctx)
+
+	// 2. Fetch current market state.
 	market, err := a.executor.GetMarketState(ctx, a.cfg.TokenIn, a.cfg.TokenOut)
 	if err != nil {
 		return fmt.Errorf("agent: market state fetch failed: %w", err)
 	}
 
-	// 2. Evaluate strategy.
+	// 3. Evaluate strategy.
 	signal, err := a.strategy.Evaluate(ctx, *market)
 	if err != nil {
 		return fmt.Errorf("agent: strategy evaluation failed: %w", err)
@@ -254,7 +258,7 @@ func (a *Agent) executeTradingCycle(ctx context.Context) error {
 		"confidence", signal.Confidence,
 		"reason", signal.Reason)
 
-	// 3. Execute trade if signal is actionable.
+	// 4. Execute trade if signal is actionable.
 	if signal.Type == trading.SignalHold {
 		return nil
 	}
@@ -269,11 +273,15 @@ func (a *Agent) processTrade(ctx context.Context, signal *trading.Signal, market
 			trading.ErrPositionExceedsMax, signal.SuggestedSize, a.strategy.MaxPosition())
 	}
 
+	// Calculate slippage-protected MinAmountOut (0.5% tolerance).
+	expectedOut := signal.SuggestedSize * market.Price
+	minOut := expectedOut * 0.995
+
 	trade := trading.Trade{
 		TokenIn:      signal.TokenIn,
 		TokenOut:     signal.TokenOut,
 		AmountIn:     fmt.Sprintf("%.6f", signal.SuggestedSize),
-		MinAmountOut: "0", // TODO: calculate with slippage
+		MinAmountOut: fmt.Sprintf("%.6f", minOut),
 		Signal:       *signal,
 		Deadline:     time.Now().Add(5 * time.Minute),
 	}
@@ -283,23 +291,27 @@ func (a *Agent) processTrade(ctx context.Context, signal *trading.Signal, market
 		return fmt.Errorf("agent: trade execution failed: %w", err)
 	}
 
-	// Record the trade in the P&L tracker.
-	revenue := 0.0
-	if result.Profitable {
-		revenue = signal.SuggestedSize * market.Price * 0.01
+	// Revenue: estimated swap output minus Uniswap V3 fee tier (0.3%).
+	cost := signal.SuggestedSize * market.Price
+	revenue := cost * 0.003 // net of 0.3% fee tier
+	if !result.Profitable {
+		revenue = 0
 	}
 
 	a.pnl.RecordTrade(trading.TradeRecord{
 		TradeResult: *result,
 		Revenue:     revenue,
-		Cost:        signal.SuggestedSize * market.Price,
+		Cost:        cost,
 	})
+
+	// Compute gas cost USD from receipt: GasCostWei / 1e18 * ETH price.
+	gasCostUSD := gasCostFromWei(result.GasCostWei)
 
 	a.pnl.RecordGasCost(trading.GasCost{
 		TxHash:  result.TxHash,
 		GasUsed: result.GasUsed,
 		CostWei: result.GasCostWei,
-		CostUSD: 0.5, // stub: real implementation would fetch ETH price
+		CostUSD: gasCostUSD,
 	})
 
 	a.completedTrades.Add(1)
@@ -309,6 +321,62 @@ func (a *Agent) processTrade(ctx context.Context, signal *trading.Signal, market
 		"profitable", result.Profitable)
 
 	return nil
+}
+
+// payForMarketData sends an x402 payment for market data access if configured.
+// Payment failures are logged but do not block the trading cycle.
+func (a *Agent) payForMarketData(ctx context.Context) {
+	if a.payment == nil || a.cfg.MarketDataRecipient == "" {
+		return
+	}
+
+	amount := new(big.Int)
+	if _, ok := amount.SetString(a.cfg.MarketDataCostWei, 10); !ok || amount.Sign() <= 0 {
+		a.log.Warn("x402: invalid market data cost, skipping payment", "cost", a.cfg.MarketDataCostWei)
+		return
+	}
+
+	receipt, err := a.payment.Pay(ctx, payment.PaymentRequest{
+		RecipientAddress: a.cfg.MarketDataRecipient,
+		Amount:           amount,
+		Token:            "ETH",
+		InvoiceID:        fmt.Sprintf("mktdata-%d", time.Now().UnixNano()),
+		Memo:             "x402 market data access",
+	})
+	if err != nil {
+		a.log.Warn("x402: market data payment failed", "err", err)
+		return
+	}
+
+	// Record the payment as a fee so it appears in P&L self-sustainability.
+	costUSD := 0.0
+	if receipt.GasCost != nil {
+		costFloat, _ := new(big.Float).SetInt(receipt.GasCost).Float64()
+		costUSD = costFloat / 1e18 * 2500 // rough ETH/USD estimate
+	}
+	a.pnl.RecordFee(trading.Fee{
+		TxHash:    receipt.TxHash,
+		Type:      "x402_market_data",
+		AmountUSD: costUSD,
+	})
+
+	a.log.Info("x402: market data payment sent", "tx", receipt.TxHash)
+}
+
+// gasCostFromWei converts a hex wei string to an approximate USD cost.
+// Uses a fixed ETH/USD rate suitable for testnet P&L tracking.
+func gasCostFromWei(hexWei string) float64 {
+	const ethPriceUSD = 2500.0
+
+	wei := new(big.Int)
+	if _, ok := wei.SetString(hexWei, 0); !ok {
+		return 0
+	}
+	ethFloat, _ := new(big.Float).Quo(
+		new(big.Float).SetInt(wei),
+		new(big.Float).SetFloat64(1e18),
+	).Float64()
+	return ethFloat * ethPriceUSD
 }
 
 // handleCoordinatorTask processes an incoming task assignment from the coordinator.

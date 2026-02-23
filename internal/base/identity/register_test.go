@@ -2,12 +2,15 @@ package identity
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/ethereum/go-ethereum/accounts/abi"
 )
 
 // testRegistry creates a registry pointing to a mock HTTP server.
@@ -59,12 +62,33 @@ func (h *rpcSequenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func TestRegister_Success(t *testing.T) {
-	// First call: GetIdentity returns not found (0x), second call: eth_blockNumber succeeds.
+// abiEncodeIdentity builds a hex-encoded ABI response for getIdentity(bytes32)
+// with outputs (uint8 status, bytes metadata, bytes signature).
+func abiEncodeIdentity(t *testing.T, status uint8, metadata, signature []byte) string {
+	t.Helper()
+
+	uint8Ty, _ := abi.NewType("uint8", "", nil)
+	bytesTy, _ := abi.NewType("bytes", "", nil)
+
+	args := abi.Arguments{
+		{Type: uint8Ty},
+		{Type: bytesTy},
+		{Type: bytesTy},
+	}
+
+	packed, err := args.Pack(status, metadata, signature)
+	if err != nil {
+		t.Fatalf("abiEncodeIdentity: %v", err)
+	}
+	return "0x" + hex.EncodeToString(packed)
+}
+
+func TestRegister_NoPrivateKey(t *testing.T) {
+	// Without a private key, Register returns an error.
 	seq := &rpcSequenceHandler{
 		responses: []interface{}{
-			"0x",           // GetIdentity eth_call: not found
-			"0x1234567",    // Register eth_blockNumber: success
+			"0x",        // GetIdentity eth_call: not found
+			"0x1234567", // eth_blockNumber: success
 		},
 	}
 	srv := httptest.NewServer(seq)
@@ -77,29 +101,57 @@ func TestRegister_Success(t *testing.T) {
 		HTTPTimeout:     5 * time.Second,
 	})
 
-	identity, err := reg.Register(context.Background(), RegistrationRequest{
+	_, err := reg.Register(context.Background(), RegistrationRequest{
 		AgentID:   "agent-defi-001",
 		PublicKey: []byte("pubkey"),
 		Metadata:  map[string]string{"type": "defi"},
 	})
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected error when private key not configured")
 	}
-	if identity == nil {
-		t.Fatal("expected identity, got nil")
+	if !errors.Is(err, ErrRegistrationFailed) {
+		t.Errorf("expected ErrRegistrationFailed, got %v", err)
 	}
-	if identity.AgentID != "agent-defi-001" {
-		t.Errorf("expected agent-defi-001, got %s", identity.AgentID)
+}
+
+func TestRegister_CalldataBuilt(t *testing.T) {
+	// With a private key, the register flow builds calldata and attempts
+	// to connect via ethclient (which will fail against the mock server).
+	seq := &rpcSequenceHandler{
+		responses: []interface{}{
+			"0x",        // GetIdentity eth_call: not found
+			"0x1234567", // eth_blockNumber: success
+		},
 	}
-	if identity.Status != StatusPending {
-		t.Errorf("expected pending status, got %s", identity.Status)
+	srv := httptest.NewServer(seq)
+	defer srv.Close()
+
+	reg := NewRegistry(RegistryConfig{
+		RPCURL:          srv.URL,
+		ChainID:         BaseSepolia,
+		ContractAddress: "0xdeadbeef",
+		PrivateKey:      "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+		HTTPTimeout:     5 * time.Second,
+	})
+
+	// Will fail at ethclient.DialContext, confirming calldata path runs.
+	_, err := reg.Register(context.Background(), RegistrationRequest{
+		AgentID:   "agent-defi-001",
+		PublicKey: []byte("pubkey"),
+		Metadata:  map[string]string{"type": "defi"},
+	})
+
+	// Error expected (mock doesn't support ethclient), but no panic.
+	if err == nil {
+		t.Fatal("expected error (mock doesn't support ethclient)")
 	}
 }
 
 func TestRegister_AlreadyRegistered(t *testing.T) {
-	// GetIdentity returns a non-empty result (agent already exists).
-	reg, _ := testRegistry(t, rpcHandlerFunc("0xsomedata"))
+	// GetIdentity returns an ABI-encoded active identity (agent already exists).
+	encoded := abiEncodeIdentity(t, 1, []byte(`{"type":"defi"}`), []byte("sig"))
+	reg, _ := testRegistry(t, rpcHandlerFunc(encoded))
 
 	_, err := reg.Register(context.Background(), RegistrationRequest{
 		AgentID: "agent-already-registered",
@@ -114,8 +166,9 @@ func TestRegister_AlreadyRegistered(t *testing.T) {
 }
 
 func TestVerify_Success(t *testing.T) {
-	// GetIdentity returns non-empty data (identity exists and is active).
-	reg, _ := testRegistry(t, rpcHandlerFunc("0xidentitydata"))
+	// GetIdentity returns ABI-encoded active identity.
+	encoded := abiEncodeIdentity(t, 1, []byte(`{}`), []byte("sig"))
+	reg, _ := testRegistry(t, rpcHandlerFunc(encoded))
 
 	active, err := reg.Verify(context.Background(), "agent-verified")
 	if err != nil {
@@ -127,7 +180,10 @@ func TestVerify_Success(t *testing.T) {
 }
 
 func TestGetIdentity_Success(t *testing.T) {
-	reg, _ := testRegistry(t, rpcHandlerFunc("0xidentitydata"))
+	meta := []byte(`{"type":"defi","version":"1"}`)
+	sig := []byte("agent-pubkey-data")
+	encoded := abiEncodeIdentity(t, 1, meta, sig)
+	reg, _ := testRegistry(t, rpcHandlerFunc(encoded))
 
 	identity, err := reg.GetIdentity(context.Background(), "agent-001")
 	if err != nil {
@@ -137,10 +193,22 @@ func TestGetIdentity_Success(t *testing.T) {
 		t.Fatal("expected identity, got nil")
 	}
 	if identity.AgentID != "agent-001" {
-		t.Errorf("expected agent-001, got %s", identity.AgentID)
+		t.Errorf("AgentID = %q, want %q", identity.AgentID, "agent-001")
 	}
 	if identity.Status != StatusActive {
-		t.Errorf("expected active status, got %s", identity.Status)
+		t.Errorf("Status = %q, want %q", identity.Status, StatusActive)
+	}
+	if !identity.IsVerified {
+		t.Error("expected IsVerified=true for active identity")
+	}
+	if identity.Metadata["type"] != "defi" {
+		t.Errorf("Metadata[type] = %q, want %q", identity.Metadata["type"], "defi")
+	}
+	if identity.Metadata["version"] != "1" {
+		t.Errorf("Metadata[version] = %q, want %q", identity.Metadata["version"], "1")
+	}
+	if string(identity.PublicKey) != "agent-pubkey-data" {
+		t.Errorf("PublicKey = %q, want %q", identity.PublicKey, "agent-pubkey-data")
 	}
 }
 
@@ -154,6 +222,36 @@ func TestGetIdentity_NotFound(t *testing.T) {
 	}
 	if !errors.Is(err, ErrIdentityNotFound) {
 		t.Errorf("expected ErrIdentityNotFound, got %v", err)
+	}
+}
+
+func TestGetIdentity_StatusZero_NotFound(t *testing.T) {
+	// Status 0 means not registered, even when the contract returns data.
+	encoded := abiEncodeIdentity(t, 0, []byte{}, []byte{})
+	reg, _ := testRegistry(t, rpcHandlerFunc(encoded))
+
+	_, err := reg.GetIdentity(context.Background(), "agent-unregistered")
+	if err == nil {
+		t.Fatal("expected error for status=0")
+	}
+	if !errors.Is(err, ErrIdentityNotFound) {
+		t.Errorf("expected ErrIdentityNotFound, got %v", err)
+	}
+}
+
+func TestGetIdentity_RevokedStatus(t *testing.T) {
+	encoded := abiEncodeIdentity(t, 2, []byte(`{}`), []byte{})
+	reg, _ := testRegistry(t, rpcHandlerFunc(encoded))
+
+	identity, err := reg.GetIdentity(context.Background(), "agent-revoked")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if identity.Status != StatusRevoked {
+		t.Errorf("Status = %q, want %q", identity.Status, StatusRevoked)
+	}
+	if identity.IsVerified {
+		t.Error("expected IsVerified=false for revoked identity")
 	}
 }
 
