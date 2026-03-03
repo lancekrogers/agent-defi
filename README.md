@@ -224,8 +224,10 @@ just clean      # Remove build artifacts
 
 The agent enforces position constraints from the [CRE Risk Router](../cre-risk-router/) via `internal/guard/CREGuard`:
 
-- If the coordinator provides a CRE-approved `MaxPositionUSD`, the guard clamps the requested trade size to that limit
-- If no CRE constraint is present, the agent falls back to its local strategy limits
+- For coordinator `execute_trade` tasks, a `cre_decision` payload is required and must be approved + non-expired (`decision_timestamp + ttl_seconds`)
+- `max_position_usd` is converted from 6-decimal USD into base-asset units using current market price, then applied as a hard clamp
+- `max_slippage_bps` is enforced per task when present
+- For autonomous/background cycles (outside coordinator tasks), the agent falls back to local strategy limits (and optional `CRE_MAX_POSITION_USD` env clamp)
 - All constraint decisions are logged for audit
 
 This ensures the DeFi agent can never exceed the position size approved by the Chainlink DON consensus risk evaluation.

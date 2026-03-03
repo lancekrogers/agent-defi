@@ -32,11 +32,11 @@ var (
 type MessageType string
 
 const (
-	MessageTypeTaskAssignment  MessageType = "task_assignment"
-	MessageTypeTaskResult      MessageType = "task_result"
-	MessageTypeHeartbeat       MessageType = "heartbeat"
-	MessageTypePnLReport       MessageType = "pnl_report"
-	MessageTypeStrategyUpdate  MessageType = "strategy_update"
+	MessageTypeTaskAssignment MessageType = "task_assignment"
+	MessageTypeTaskResult     MessageType = "task_result"
+	MessageTypeHeartbeat      MessageType = "heartbeat"
+	MessageTypePnLReport      MessageType = "pnl_report"
+	MessageTypeStrategyUpdate MessageType = "strategy_update"
 )
 
 // Envelope is the standard message format for all protocol messages sent
@@ -68,14 +68,25 @@ func UnmarshalEnvelope(data []byte) (*Envelope, error) {
 
 // TaskAssignment is received from the coordinator when a new task is assigned.
 type TaskAssignment struct {
-	TaskID      string    `json:"task_id"`
-	TaskType    string    `json:"task_type"` // e.g., "execute_trade", "update_strategy"
-	Priority    int       `json:"priority"`
-	CallbackURL string    `json:"callback_url,omitempty"`
-	Deadline    time.Time `json:"deadline,omitempty"`
+	TaskID      string       `json:"task_id"`
+	TaskType    string       `json:"task_type"` // e.g., "execute_trade", "update_strategy"
+	Priority    int          `json:"priority"`
+	CallbackURL string       `json:"callback_url,omitempty"`
+	Deadline    time.Time    `json:"deadline,omitempty"`
+	CREDecision *CREDecision `json:"cre_decision,omitempty"`
 
 	// Strategy holds optional strategy configuration for strategy_update tasks.
 	Strategy map[string]interface{} `json:"strategy,omitempty"`
+}
+
+// CREDecision is an approved risk decision attached to DeFi tasks.
+type CREDecision struct {
+	Approved          bool   `json:"approved"`
+	MaxPositionUSD    uint64 `json:"max_position_usd"`
+	MaxSlippageBps    uint64 `json:"max_slippage_bps"`
+	TTLSeconds        uint64 `json:"ttl_seconds"`
+	DecisionTimestamp int64  `json:"decision_timestamp"`
+	Reason            string `json:"reason"`
 }
 
 // TaskResult is published back to the coordinator when a task completes.

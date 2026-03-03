@@ -76,12 +76,12 @@ func main() {
 	// Wire the agent with all dependencies.
 	a := agent.New(*cfg, log, daemonClient, idRegistry, pay, executor, strategy, pnl, handler)
 
+	creGuard := guard.NewCREGuard(log)
+	a.SetCREGuard(creGuard)
 	if cfg.CREMaxPositionUSD > 0 {
-		creGuard := guard.NewCREGuard(log)
-		a.SetCREGuard(creGuard)
 		log.Info("CRE position guard enabled", "max_position_usd", cfg.CREMaxPositionUSD)
 	} else {
-		log.Info("CRE position guard not configured")
+		log.Info("CRE position guard enabled without global max (per-task constraints only)")
 	}
 
 	log.Info("DeFi agent starting",

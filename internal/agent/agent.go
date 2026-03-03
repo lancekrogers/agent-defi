@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/big"
 	"sync/atomic"
 	"time"
@@ -159,7 +160,7 @@ func (a *Agent) tradingLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := a.executeTradingCycle(ctx); err != nil {
+			if err := a.executeTradingCycle(ctx, nil); err != nil {
 				a.log.Warn("trading cycle failed", "error", err)
 				a.failedTrades.Add(1)
 			}
@@ -240,7 +241,7 @@ func (a *Agent) healthLoop(ctx context.Context) {
 }
 
 // executeTradingCycle runs one complete strategy evaluation and optional trade.
-func (a *Agent) executeTradingCycle(ctx context.Context) error {
+func (a *Agent) executeTradingCycle(ctx context.Context, creDecision *hcs.CREDecision) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("agent: context cancelled before trading cycle: %w", err)
 	}
@@ -270,33 +271,57 @@ func (a *Agent) executeTradingCycle(ctx context.Context) error {
 		return nil
 	}
 
-	return a.processTrade(ctx, signal, market)
+	return a.processTrade(ctx, signal, market, creDecision)
 }
 
 // processTrade executes a trade based on the given signal and records the result.
-func (a *Agent) processTrade(ctx context.Context, signal *trading.Signal, market *trading.MarketState) error {
+func (a *Agent) processTrade(ctx context.Context, signal *trading.Signal, market *trading.MarketState, creDecision *hcs.CREDecision) error {
 	if signal.SuggestedSize > a.strategy.MaxPosition() {
 		return fmt.Errorf("agent: %w: signal size %.4f > max %.4f",
 			trading.ErrPositionExceedsMax, signal.SuggestedSize, a.strategy.MaxPosition())
 	}
 
-	// Apply CRE constraint if guard is configured.
-	if a.guard != nil {
-		constrained, err := a.guard.EnforceConstraint(ctx, "", signal.SuggestedSize, a.cfg.CREMaxPositionUSD)
-		if err != nil {
-			return fmt.Errorf("agent: CRE guard failed: %w", err)
+	constraintLimit := a.cfg.CREMaxPositionUSD
+	if creDecision != nil {
+		if market.Price <= 0 {
+			return fmt.Errorf("agent: invalid market price %.6f for CRE constraint", market.Price)
 		}
-		if constrained < signal.SuggestedSize {
-			a.log.Info("CRE guard clamped position",
-				"original", signal.SuggestedSize,
-				"clamped", constrained)
-			signal.SuggestedSize = constrained
+		// CRE max_position_usd is 6-decimal USD; convert into base-asset units.
+		constraintLimit = (float64(creDecision.MaxPositionUSD) / 1_000_000.0) / market.Price
+	}
+
+	if constraintLimit > 0 {
+		if a.guard != nil {
+			constrained, err := a.guard.EnforceConstraint(ctx, "", signal.SuggestedSize, constraintLimit)
+			if err != nil {
+				return fmt.Errorf("agent: CRE guard failed: %w", err)
+			}
+			if constrained < signal.SuggestedSize {
+				a.log.Info("CRE guard clamped position",
+					"original", signal.SuggestedSize,
+					"clamped", constrained)
+				signal.SuggestedSize = constrained
+			}
+		} else if constraintLimit < signal.SuggestedSize {
+			signal.SuggestedSize = constraintLimit
 		}
 	}
 
-	// Calculate slippage-protected MinAmountOut (0.5% tolerance).
+	slippageBps := a.cfg.Trading.SlippageBPS
+	if creDecision != nil && creDecision.MaxSlippageBps > 0 {
+		slippageBps = int(creDecision.MaxSlippageBps)
+	}
+	if slippageBps < 0 {
+		slippageBps = 0
+	}
+	if slippageBps > 10000 {
+		slippageBps = 10000
+	}
+
+	// Calculate slippage-protected MinAmountOut.
 	expectedOut := signal.SuggestedSize * market.Price
-	minOut := expectedOut * 0.995
+	minOut := expectedOut * (1.0 - float64(slippageBps)/10000.0)
+	minOut = math.Max(0, minOut)
 
 	trade := trading.Trade{
 		TokenIn:      signal.TokenIn,
@@ -410,7 +435,12 @@ func (a *Agent) handleCoordinatorTask(ctx context.Context, task hcs.TaskAssignme
 
 	switch task.TaskType {
 	case "execute_trade":
-		taskErr = a.executeTradingCycle(ctx)
+		decision, err := validateCREDecision(task, time.Now().Unix())
+		if err != nil {
+			taskErr = err
+			break
+		}
+		taskErr = a.executeTradingCycle(ctx, decision)
 	default:
 		taskErr = fmt.Errorf("agent: unknown task type: %s", task.TaskType)
 	}
@@ -432,4 +462,25 @@ func (a *Agent) handleCoordinatorTask(ctx context.Context, task hcs.TaskAssignme
 		Error:      errMsg,
 		DurationMs: duration.Milliseconds(),
 	})
+}
+
+func validateCREDecision(task hcs.TaskAssignment, nowUnix int64) (*hcs.CREDecision, error) {
+	if task.CREDecision == nil {
+		return nil, fmt.Errorf("agent: missing cre_decision for execute_trade task %s", task.TaskID)
+	}
+
+	d := task.CREDecision
+	if !d.Approved {
+		return nil, fmt.Errorf("agent: CRE decision denied task %s: %s", task.TaskID, d.Reason)
+	}
+	if d.DecisionTimestamp <= 0 || d.TTLSeconds == 0 {
+		return nil, fmt.Errorf("agent: invalid cre_decision ttl metadata for task %s", task.TaskID)
+	}
+
+	expiresAt := d.DecisionTimestamp + int64(d.TTLSeconds)
+	if nowUnix > expiresAt {
+		return nil, fmt.Errorf("agent: cre_decision expired for task %s", task.TaskID)
+	}
+
+	return d, nil
 }

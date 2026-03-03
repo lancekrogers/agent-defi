@@ -90,9 +90,11 @@ type mockExecutor struct {
 	executeResult *trading.TradeResult
 	balance       *trading.Balance
 	market        *trading.MarketState
+	lastTrade     trading.Trade
 }
 
 func (m *mockExecutor) Execute(_ context.Context, trade trading.Trade) (*trading.TradeResult, error) {
+	m.lastTrade = trade
 	if m.executeErr != nil {
 		return nil, m.executeErr
 	}
@@ -312,7 +314,7 @@ func TestProcessTrade_Success(t *testing.T) {
 		FetchedAt:     time.Now(),
 	}
 
-	err := a.processTrade(context.Background(), signal, market)
+	err := a.processTrade(context.Background(), signal, market, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -347,9 +349,109 @@ func TestProcessTrade_ExecuteFails(t *testing.T) {
 	}
 	market := &trading.MarketState{Price: 1800.0, FetchedAt: time.Now()}
 
-	err := a.processTrade(context.Background(), signal, market)
+	err := a.processTrade(context.Background(), signal, market, nil)
 	if err == nil {
 		t.Fatal("expected error when execute fails")
+	}
+}
+
+func TestProcessTrade_AppliesTaskCREConstraints(t *testing.T) {
+	mt := newMockTransport()
+	handler := hcs.NewHandler(hcs.HandlerConfig{
+		Transport:     mt,
+		ResultTopicID: "result-topic",
+		AgentID:       "test-agent",
+	})
+
+	exec := &mockExecutor{}
+	a := New(
+		testConfig(), testLogger(),
+		daemon.Noop(),
+		defaultMockIdentity(), &mockPayment{},
+		exec,
+		&mockStrategy{name: "s", maxPos: 1.0},
+		trading.NewPnLTracker(),
+		handler,
+	)
+
+	signal := &trading.Signal{
+		Type:          trading.SignalBuy,
+		SuggestedSize: 0.2,
+		TokenIn:       "0xusdc",
+		TokenOut:      "0xweth",
+	}
+	market := &trading.MarketState{Price: 2000.0, FetchedAt: time.Now()}
+	creDecision := &hcs.CREDecision{
+		Approved:          true,
+		MaxPositionUSD:    100_000000, // $100 at 6 decimals -> 0.05 units at $2000
+		MaxSlippageBps:    100,        // 1%
+		TTLSeconds:        300,
+		DecisionTimestamp: time.Now().Unix(),
+		Reason:            "approved",
+	}
+
+	if err := a.processTrade(context.Background(), signal, market, creDecision); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got, want := exec.lastTrade.AmountIn, "0.050000"; got != want {
+		t.Fatalf("AmountIn = %s, want %s", got, want)
+	}
+	if got, want := exec.lastTrade.MinAmountOut, "99.000000"; got != want {
+		t.Fatalf("MinAmountOut = %s, want %s", got, want)
+	}
+}
+
+func TestValidateCREDecision(t *testing.T) {
+	now := time.Now().Unix()
+
+	tests := []struct {
+		name    string
+		task    hcs.TaskAssignment
+		wantErr bool
+	}{
+		{
+			name:    "missing decision",
+			task:    hcs.TaskAssignment{TaskID: "t1"},
+			wantErr: true,
+		},
+		{
+			name: "expired decision",
+			task: hcs.TaskAssignment{
+				TaskID: "t2",
+				CREDecision: &hcs.CREDecision{
+					Approved:          true,
+					MaxPositionUSD:    1,
+					MaxSlippageBps:    50,
+					TTLSeconds:        10,
+					DecisionTimestamp: now - 100,
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "valid decision",
+			task: hcs.TaskAssignment{
+				TaskID: "t3",
+				CREDecision: &hcs.CREDecision{
+					Approved:          true,
+					MaxPositionUSD:    1,
+					MaxSlippageBps:    50,
+					TTLSeconds:        300,
+					DecisionTimestamp: now,
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := validateCREDecision(tt.task, now)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateCREDecision error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
 	}
 }
 
@@ -411,7 +513,7 @@ func TestTradingLoop_HoldSignalSkipsTrade(t *testing.T) {
 		},
 	}
 
-	err := a.executeTradingCycle(context.Background())
+	err := a.executeTradingCycle(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -561,7 +663,7 @@ func TestTradingCycle_CallsX402Payment(t *testing.T) {
 		handler,
 	)
 
-	err := a.executeTradingCycle(context.Background())
+	err := a.executeTradingCycle(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -585,7 +687,7 @@ func TestTradingCycle_SkipsX402WhenNotConfigured(t *testing.T) {
 
 	// MarketDataRecipient is empty by default in testConfig.
 	mockPay := a.payment.(*mockPayment)
-	err := a.executeTradingCycle(context.Background())
+	err := a.executeTradingCycle(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
