@@ -1,5 +1,12 @@
 # agent-defi
 
+[![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![Base](https://img.shields.io/badge/Base-Sepolia-0052FF?logo=coinbase)](https://base.org)
+[![Uniswap](https://img.shields.io/badge/Uniswap-V3-FF007A?logo=uniswap)](https://uniswap.org)
+[![Hedera](https://img.shields.io/badge/Hedera-HCS-8259EF?logo=hedera)](https://hedera.com)
+[![ERC-8004](https://img.shields.io/badge/ERC--8004-Identity-3C3C3D?logo=ethereum)](https://eips.ethereum.org)
+[![ERC-8021](https://img.shields.io/badge/ERC--8021-Attribution-3C3C3D?logo=ethereum)](https://eips.ethereum.org)
+
 Autonomous DeFi trading agent for Base Sepolia with on-chain identity, machine-to-machine payments, and transaction attribution.
 
 Part of the [ETHDenver 2026 Agent Economy](../README.md) submission.
@@ -9,6 +16,8 @@ Part of the [ETHDenver 2026 Agent Economy](../README.md) submission.
 A self-sustaining trading agent that operates on Base Sepolia (chain ID 84532). It registers an on-chain identity via ERC-8004, pays for external services autonomously via the x402 payment protocol, executes mean reversion trades on Uniswap V3, and attributes all transactions with ERC-8021 builder codes. P&L reports and health status are published to the coordinator via Hedera Consensus Service (HCS).
 
 The agent is designed to be economically self-sustaining: trading revenue covers gas costs, compute fees (paid via x402), and HCS messaging costs.
+
+> **TL;DR** — Autonomous trading agent on Base Sepolia: registers on-chain identity (ERC-8004), executes mean reversion trades on Uniswap V3, pays for services via x402, attributes transactions with ERC-8021 builder codes, and reports P&L to the coordinator via Hedera HCS. Designed to be economically self-sustaining.
 
 ## Built with Obedience Corp
 
@@ -197,16 +206,18 @@ just run
 ## Project Structure
 
 ```
-cmd/agent-defi/            Entry point, dependency wiring
-internal/
-  agent/                   Agent lifecycle, config, goroutine orchestration
-  base/
-    attribution/           ERC-8021 builder code encoder/decoder
-    identity/              ERC-8004 on-chain identity registration
-    payment/               x402 machine-to-machine payment protocol
-    trading/               Mean reversion strategy, trade executor, P&L tracker
-  guard/                   CRE Risk Router constraint enforcement (position clamping)
-  hcs/                     HCS publish/subscribe transport (Hiero SDK)
+agent-defi/
+├── cmd/
+│   └── agent-defi/            # Entry point, dependency wiring
+├── internal/
+│   ├── agent/                 # Agent lifecycle, config, goroutine orchestration
+│   ├── base/
+│   │   ├── attribution/       # ERC-8021 builder code encoder/decoder
+│   │   ├── identity/          # ERC-8004 on-chain identity registration
+│   │   ├── payment/           # x402 machine-to-machine payment protocol
+│   │   └── trading/           # Mean reversion strategy, trade executor, P&L tracker
+│   ├── guard/                 # CRE Risk Router constraint enforcement (position clamping)
+│   └── hcs/                   # HCS publish/subscribe transport (Hiero SDK)
 ```
 
 ## Development
