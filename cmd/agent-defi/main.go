@@ -41,25 +41,31 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// Initialize ERC-8004 identity registry.
-	idRegistry := identity.NewRegistry(cfg.Identity)
+	var idRegistry identity.IdentityRegistry
+	var pay payment.PaymentProtocol
+	var executor trading.TradeExecutor
 
-	// Initialize x402 payment protocol.
-	pay := payment.NewProtocol(cfg.Payment)
-
-	// Initialize ERC-8021 attribution encoder and inject into trading config.
-	enc, err := attribution.NewEncoder(cfg.Attribution)
-	if err != nil {
-		log.Warn("attribution encoder disabled", "error", err)
+	if cfg.MockMode {
+		log.Info("MOCK MODE ENABLED - no real blockchain transactions")
+		idRegistry = identity.NewMockRegistry()
+		pay = payment.NewMockProtocol()
+		executor = trading.NewMockExecutor()
 	} else {
-		cfg.Trading.Attribution = enc
+		idRegistry = identity.NewRegistry(cfg.Identity)
+		pay = payment.NewProtocol(cfg.Payment)
+
+		enc, err := attribution.NewEncoder(cfg.Attribution)
+		if err != nil {
+			log.Warn("attribution encoder disabled", "error", err)
+		} else {
+			cfg.Trading.Attribution = enc
+		}
+
+		executor = trading.NewExecutor(cfg.Trading)
 	}
 
 	// Initialize trading strategy.
 	strategy := trading.NewMeanReversionStrategy(cfg.StrategyConfig())
-
-	// Initialize trade executor for Base Sepolia.
-	executor := trading.NewExecutor(cfg.Trading)
 
 	// Initialize P&L tracker.
 	pnl := trading.NewPnLTracker()

@@ -7,6 +7,6 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /src/bin/agent-defi ./cmd/agent-defi
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata procps
 COPY --from=builder /src/bin/agent-defi /usr/local/bin/agent-defi
 ENTRYPOINT ["agent-defi"]

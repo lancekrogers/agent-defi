@@ -63,6 +63,11 @@ type Config struct {
 	// When > 0 and a CRE guard is configured, trade positions are clamped to this limit.
 	// Set via CRE_MAX_POSITION_USD environment variable.
 	CREMaxPositionUSD float64
+
+	// MockMode enables mock/dry-run mode for all blockchain subsystems.
+	// When true, identity, trading, and payment use in-memory mocks instead
+	// of hitting the real Base Sepolia RPC. Defaults to true via DEFI_MOCK_MODE.
+	MockMode bool
 }
 
 // StrategyConfig builds a MeanReversionConfig from the agent's trading config.
@@ -131,6 +136,9 @@ func LoadConfig() (*Config, error) {
 	if creMax := os.Getenv("CRE_MAX_POSITION_USD"); creMax != "" {
 		cfg.CREMaxPositionUSD, _ = strconv.ParseFloat(creMax, 64)
 	}
+
+	// Mock mode: defaults to true so the agent can start without an funded wallet.
+	cfg.MockMode = envOr("DEFI_MOCK_MODE", "true") != "false"
 
 	return cfg, nil
 }
