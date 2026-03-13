@@ -13,11 +13,11 @@ Part of the [Obey Agent Economy](https://github.com/lancekrogers/Obey-Agent-Econ
 
 ## Overview
 
-A self-sustaining trading agent that operates on Base Sepolia (chain ID 84532). It registers an on-chain identity via ERC-8004, pays for external services autonomously via the x402 payment protocol, executes mean reversion trades on Uniswap V3, and attributes all transactions with ERC-8021 builder codes. P&L reports and health status are published to the coordinator via Hedera Consensus Service (HCS).
+A trading agent that operates on Base Sepolia (chain ID 84532). It registers an on-chain identity via ERC-8004, pays for external services autonomously via the x402 payment protocol, executes mean reversion trades on Uniswap V3, and attributes all transactions with ERC-8021 builder codes. P&L reports and health status are published to the coordinator via Hedera Consensus Service (HCS).
 
-The agent is designed to be economically self-sustaining: trading revenue covers gas costs, compute fees (paid via x402), and HCS messaging costs.
+The agent is designed for self-funded operation: trading logic, x402 payment handling, and P&L accounting are implemented in code, while additional live trading evidence is still being collected.
 
-> **TL;DR** — Autonomous trading agent on Base Sepolia: registers on-chain identity (ERC-8004), executes mean reversion trades on Uniswap V3, pays for services via x402, attributes transactions with ERC-8021 builder codes, and reports P&L to the coordinator via Hedera HCS. Designed to be economically self-sustaining.
+> **TL;DR** — Autonomous trading agent on Base Sepolia: registers on-chain identity (ERC-8004), executes mean reversion trades on Uniswap V3, pays for services via x402, attributes transactions with ERC-8021 builder codes, and reports P&L to the coordinator via Hedera HCS. Includes implemented testnet economics and cost tracking.
 
 ## Built with Obedience Corp
 
@@ -135,7 +135,7 @@ Signal confidence scales linearly with deviation magnitude (0.5 at threshold, 1.
 
 ## P&L Summary
 
-The agent's economic model targets **~$12-16 net profit per trade** at the 2% mean reversion threshold with a $1000 position:
+The agent's economic model estimates **~$12-16 net profit per trade** at the 2% mean reversion threshold with a $1000 position:
 
 | Component | Amount |
 |-----------|--------|
@@ -145,7 +145,7 @@ The agent's economic model targets **~$12-16 net profit per trade** at the 2% me
 | Slippage (est.) | -$1-5 |
 | **Net per trade** | **~$12-16** |
 
-Base L2 gas costs are negligible (~$0.01 per `exactInputSingle` call), making the self-sustaining model viable even at conservative trading thresholds. The `IsSelfSustaining` flag in every HCS P&L report is computed as `NetPnL > 0`.
+Base L2 gas costs are negligible (~$0.01 per `exactInputSingle` call), which makes the model plausible even at conservative trading thresholds. The `IsSelfSustaining` flag in every HCS P&L report is computed as `NetPnL > 0`, but additional live trade evidence is still worth collecting before treating the estimate as proven.
 
 For full economic analysis, break-even math, and verification steps, see [docs/pnl-proof.md](docs/pnl-proof.md).
 
@@ -249,7 +249,7 @@ This project targets the **Base: Self-Sustaining Agent** bounty.
 
 | Requirement | Implementation |
 |-------------|----------------|
-| Self-sustaining agent | Trading revenue covers gas costs, compute fees (x402), and HCS messaging |
+| Cost-aware agent | Trading logic, x402 handling, and P&L accounting are implemented for self-funded operation |
 | On-chain identity | ERC-8004 agent identity registered on Base Sepolia |
 | Machine-to-machine payments | x402 protocol: HTTP 402 handshake with on-chain payment proof |
 | Transaction attribution | ERC-8021 builder codes appended to all trade calldata |
