@@ -111,7 +111,7 @@ func main() {
 	flag.StringVar(&outFile, "out", "agent_log.json", "output file path")
 	flag.StringVar(&agentName, "name", "OBEY Vault Agent", "agent name in log")
 	flag.StringVar(&agentID, "identity", "0x0C97820abBdD2562645DaE92D35eD581266CCe70", "ERC-8004 identity address")
-	flag.Uint64Var(&fromBlockNum, "from-block", 0, "block number to start scanning events from (0 = genesis)")
+	flag.Uint64Var(&fromBlockNum, "from-block", 0, "block number to start scanning events from (0 = last 500K blocks)")
 	flag.Parse()
 
 	if rpcURL == "" {
@@ -230,58 +230,82 @@ func loadSwapEvents(ctx context.Context, rpcURL, vaultAddrHex string, fromBlock 
 		return nil, errors.New("loggen: bind filterer: " + err.Error())
 	}
 
-	opts := &bind.FilterOpts{
-		Start:   fromBlock,
-		Context: ctx,
-	}
-
-	iter, err := filterer.FilterSwapExecuted(opts, nil, nil)
+	latestBlock, err := ethClient.BlockNumber(ctx)
 	if err != nil {
-		return nil, errors.New("loggen: filter swap events: " + err.Error())
+		return nil, errors.New("loggen: query latest block: " + err.Error())
 	}
-	defer iter.Close()
 
+	// If no explicit start block, look back at most 500K blocks.
+	const maxLookback = uint64(500_000)
+	if fromBlock == 0 && latestBlock > maxLookback {
+		fromBlock = latestBlock - maxLookback
+	}
+
+	// Paginate in 10000-block chunks to stay within RPC limits.
+	const chunkSize = uint64(10_000)
 	var entries []LogEntry
-	for iter.Next() {
-		evt := iter.Event
 
-		header, err := ethClient.HeaderByNumber(ctx, new(big.Int).SetUint64(evt.Raw.BlockNumber))
-		if err != nil {
-			log.Printf("warning: get block %d header: %v", evt.Raw.BlockNumber, err)
-			continue
+	for start := fromBlock; start <= latestBlock; start += chunkSize {
+		end := start + chunkSize - 1
+		if end > latestBlock {
+			end = latestBlock
 		}
 
-		ts := time.Unix(int64(header.Time), 0).UTC().Format(time.RFC3339)
+		opts := &bind.FilterOpts{
+			Start:   start,
+			End:     &end,
+			Context: ctx,
+		}
 
-		entries = append(entries, LogEntry{
-			Timestamp: ts,
-			Phase:     "execute",
-			Action:    "vault_swap",
-			ToolsUsed: []string{"obey_vault_execute_swap", "uniswap_v3_pool_query"},
-			Decision:  "GO",
-			Reasoning: map[string]any{
-				"reason_bytes": fmt.Sprintf("0x%x", evt.Reason),
-			},
-			Execution: &ExecutionDetail{
-				TxHash:    evt.Raw.TxHash.Hex(),
-				Chain:     chainName,
-				ChainID:   chainID.Int64(),
-				TokenIn:   tokenName(evt.TokenIn),
-				TokenOut:  tokenName(evt.TokenOut),
-				AmountIn:  evt.AmountIn.String(),
-				AmountOut: evt.AmountOut.String(),
-			},
-			Verification: &VerifyDetail{
-				ActualOutput:    evt.AmountOut.String(),
-				WithinTolerance: true,
-			},
-			Retries: 0,
-			Errors:  []string{},
-		})
-	}
+		iter, err := filterer.FilterSwapExecuted(opts, nil, nil)
+		if err != nil {
+			return entries, errors.New("loggen: filter swap events: " + err.Error())
+		}
 
-	if err := iter.Error(); err != nil {
-		return entries, errors.New("loggen: event iteration failed: " + err.Error())
+		for iter.Next() {
+			evt := iter.Event
+
+			header, err := ethClient.HeaderByNumber(ctx, new(big.Int).SetUint64(evt.Raw.BlockNumber))
+			if err != nil {
+				log.Printf("warning: get block %d header: %v", evt.Raw.BlockNumber, err)
+				iter.Close()
+				continue
+			}
+
+			ts := time.Unix(int64(header.Time), 0).UTC().Format(time.RFC3339)
+
+			entries = append(entries, LogEntry{
+				Timestamp: ts,
+				Phase:     "execute",
+				Action:    "vault_swap",
+				ToolsUsed: []string{"obey_vault_execute_swap", "uniswap_v3_pool_query"},
+				Decision:  "GO",
+				Reasoning: map[string]any{
+					"reason_bytes": fmt.Sprintf("0x%x", evt.Reason),
+				},
+				Execution: &ExecutionDetail{
+					TxHash:    evt.Raw.TxHash.Hex(),
+					Chain:     chainName,
+					ChainID:   chainID.Int64(),
+					TokenIn:   tokenName(evt.TokenIn),
+					TokenOut:  tokenName(evt.TokenOut),
+					AmountIn:  evt.AmountIn.String(),
+					AmountOut: evt.AmountOut.String(),
+				},
+				Verification: &VerifyDetail{
+					ActualOutput:    evt.AmountOut.String(),
+					WithinTolerance: true,
+				},
+				Retries: 0,
+				Errors:  []string{},
+			})
+		}
+
+		if iterErr := iter.Error(); iterErr != nil {
+			iter.Close()
+			return entries, errors.New("loggen: event iteration failed: " + iterErr.Error())
+		}
+		iter.Close()
 	}
 
 	return entries, nil
