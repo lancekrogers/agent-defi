@@ -48,6 +48,10 @@ tidy:
 deps:
     go mod graph
 
+# Generate agent_log.json from on-chain events + ritual artifacts
+loggen *ARGS:
+    go run ./cmd/loggen {{ARGS}}
+
 # Remove build artifacts
 clean:
     rm -rf {{bin_dir}}/ coverage.out coverage.html
