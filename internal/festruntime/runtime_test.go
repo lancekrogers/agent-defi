@@ -250,6 +250,53 @@ func TestRuntimeEvaluateFailsOnMalformedDecisionArtifact(t *testing.T) {
 	}
 }
 
+func TestRuntimeEvaluateFailsWhenDecisionArtifactMissing(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	runDir := filepath.Join(root, "festivals", "active", "agent-market-research-RI-AM0001-0001")
+	fest := writeFakeFest(t, root, runDir, 0, 100)
+
+	session := &fakeSessionRunner{
+		meta: SessionMeta{
+			SessionID: "session-missing-decision",
+			Campaign:  "Obey-Agent-Economy",
+			Provider:  "test-provider",
+			Model:     "test-model",
+			Festival:  "agent-market-research-RI-AM0001-0001",
+			Workdir:   runDir,
+		},
+		writeFn: func(req SessionRequest) error {
+			resultsDir := filepath.Join(req.Workdir, "003_DECIDE", "01_synthesize_decision", "results")
+			if err := os.MkdirAll(resultsDir, 0o755); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(resultsDir, "agent_log_entry.json"), []byte(`{"ok":true}`), 0o644)
+		},
+	}
+
+	runtime, err := New(Config{
+		CampaignRoot: root,
+		RitualID:     "agent-market-research-RI-AM0001",
+		FestBinary:   fest,
+		TokenIn:      "0xusdc",
+		TokenOut:     "0xweth",
+		PollInterval: time.Millisecond,
+		Timeout:      50 * time.Millisecond,
+	}, session)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	_, err = runtime.Evaluate(context.Background(), trading.MarketState{Price: 500})
+	if err == nil {
+		t.Fatal("Evaluate() error = nil, want missing decision artifact failure")
+	}
+	if !strings.Contains(err.Error(), "completed without required artifacts") {
+		t.Fatalf("error = %v, want missing artifact failure", err)
+	}
+}
+
 func TestRuntimeEvaluateFailsClosedWhenPreflightFails(t *testing.T) {
 	t.Parallel()
 
@@ -487,6 +534,47 @@ func TestRuntimeSignalFromDecisionBuildsBuySignal(t *testing.T) {
 	}
 	if signal.Ritual.Campaign != "Obey-Agent-Economy" {
 		t.Fatalf("ritual campaign = %q, want Obey-Agent-Economy", signal.Ritual.Campaign)
+	}
+}
+
+func TestRuntimeSignalFromDecisionRejectsGoWhenTradeNotAllowed(t *testing.T) {
+	t.Parallel()
+
+	runtime := &Runtime{
+		cfg: Config{
+			TokenIn:  "0xusdc",
+			TokenOut: "0xweth",
+		},
+		now: func() time.Time { return time.Unix(123, 0).UTC() },
+	}
+
+	_, err := runtime.signalFromDecision(Decision{
+		RitualID:    "RI-AM0001",
+		RitualRunID: "agent-market-research-RI-AM0001-0003",
+		Decision:    "GO",
+		Confidence:  0.8,
+		Rationale: Rationale{
+			Summary: "trade looked attractive but guardrails denied execution",
+		},
+		Recommendation: &DecisionRe{
+			Direction:        "BUY",
+			SuggestedSizeUSD: 2500,
+		},
+		Guardrails: Guardrails{
+			TradeAllowed: false,
+		},
+	}, trading.MarketState{Price: 500}, SessionMeta{
+		SessionID: "session-123",
+		Campaign:  "Obey-Agent-Economy",
+		Provider:  "test-provider",
+		Model:     "test-model",
+		Workdir:   "/tmp/run",
+	}, artifactFiles{})
+	if err == nil {
+		t.Fatal("signalFromDecision() error = nil, want guardrail failure")
+	}
+	if !strings.Contains(err.Error(), "trade_allowed=false") {
+		t.Fatalf("error = %v, want trade_allowed failure", err)
 	}
 }
 

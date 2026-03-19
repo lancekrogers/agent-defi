@@ -391,6 +391,9 @@ func (r *Runtime) signalFromDecision(decision Decision, market trading.MarketSta
 		signal.Type = trading.SignalHold
 		return signal, nil
 	}
+	if !decision.Guardrails.TradeAllowed {
+		return nil, errors.New("festruntime: GO decision marked trade_allowed=false")
+	}
 	if decision.Recommendation == nil {
 		return nil, errors.New("festruntime: GO decision missing recommendation")
 	}
