@@ -18,6 +18,12 @@ type Config struct {
 	Interval time.Duration
 	TokenIn  common.Address
 	TokenOut common.Address
+	AgentLog AgentLogRefresher
+}
+
+// AgentLogRefresher rebuilds the aggregate Protocol Labs evidence log.
+type AgentLogRefresher interface {
+	Refresh(ctx context.Context) (int, error)
 }
 
 // Runner orchestrates the trading loop: fetch market data, evaluate strategy,
@@ -29,11 +35,12 @@ type Runner struct {
 	executor trading.TradeExecutor
 	strategy trading.Strategy
 	risk     *risk.Manager
+	agentLog AgentLogRefresher
 }
 
 // New creates a trading loop runner.
 func New(cfg Config, log *slog.Logger, v vault.Client, exec trading.TradeExecutor, strat trading.Strategy, r *risk.Manager) *Runner {
-	return &Runner{cfg: cfg, log: log, vault: v, executor: exec, strategy: strat, risk: r}
+	return &Runner{cfg: cfg, log: log, vault: v, executor: exec, strategy: strat, risk: r, agentLog: cfg.AgentLog}
 }
 
 // Run starts the trading loop, executing cycles at the configured interval.
@@ -84,10 +91,27 @@ func (r *Runner) cycle(ctx context.Context) error {
 	}
 
 	if r.log != nil {
-		r.log.Info("signal", "type", signal.Type, "confidence", signal.Confidence, "reason", signal.Reason)
+		args := []any{"type", signal.Type, "confidence", signal.Confidence, "reason", signal.Reason}
+		if signal.Ritual != nil {
+			args = append(args,
+				"ritual_id", signal.Ritual.RitualID,
+				"ritual_run_id", signal.Ritual.RitualRunID,
+				"session_id", signal.Ritual.SessionID,
+				"provider", signal.Ritual.Provider,
+				"model", signal.Ritual.Model,
+				"workdir", signal.Ritual.Workdir,
+				"trade_allowed", signal.Ritual.Guardrails.TradeAllowed,
+				"blocking_factors", signal.Ritual.BlockingFactors,
+			)
+		}
+		r.log.Info("signal", args...)
 	}
 
 	if signal.Type == trading.SignalHold {
+		if r.log != nil && signal.Ritual != nil && len(signal.Ritual.BlockingFactors) > 0 {
+			r.log.Info("ritual denied trade", "ritual_run_id", signal.Ritual.RitualRunID, "blocking_factors", signal.Ritual.BlockingFactors)
+		}
+		r.refreshAgentLog(ctx)
 		return nil
 	}
 
@@ -100,12 +124,21 @@ func (r *Runner) cycle(ctx context.Context) error {
 
 	r.risk.Clamp(signal, market.Price)
 
-	amountIn := new(big.Int).SetInt64(int64(signal.SuggestedSize * 1e6))
-	minOut := new(big.Int).SetInt64(int64(signal.SuggestedSize * market.Price * 0.99 * 1e18))
+	var amountIn, minOut *big.Int
+	switch signal.Type {
+	case trading.SignalBuy:
+		amountIn = new(big.Int).SetInt64(int64(signal.SuggestedSize * market.Price * 1e6))
+		minOut = new(big.Int).SetInt64(int64(signal.SuggestedSize * 0.99 * 1e18))
+	case trading.SignalSell:
+		amountIn = new(big.Int).SetInt64(int64(signal.SuggestedSize * 1e18))
+		minOut = new(big.Int).SetInt64(int64(signal.SuggestedSize * market.Price * 0.99 * 1e6))
+	default:
+		return fmt.Errorf("cycle: unsupported signal type %q", signal.Type)
+	}
 
 	txHash, err := r.vault.ExecuteSwap(ctx, vault.SwapParams{
-		TokenIn:      r.cfg.TokenIn,
-		TokenOut:     r.cfg.TokenOut,
+		TokenIn:      common.HexToAddress(signal.TokenIn),
+		TokenOut:     common.HexToAddress(signal.TokenOut),
 		AmountIn:     amountIn,
 		MinAmountOut: minOut,
 		Reason:       []byte(signal.Reason),
@@ -118,5 +151,22 @@ func (r *Runner) cycle(ctx context.Context) error {
 	if r.log != nil {
 		r.log.Info("swap executed", "tx", txHash.Hex(), "size", signal.SuggestedSize)
 	}
+	r.refreshAgentLog(ctx)
 	return nil
+}
+
+func (r *Runner) refreshAgentLog(ctx context.Context) {
+	if r.agentLog == nil {
+		return
+	}
+	count, err := r.agentLog.Refresh(ctx)
+	if err != nil {
+		if r.log != nil {
+			r.log.Warn("agent log refresh failed", "error", err)
+		}
+		return
+	}
+	if r.log != nil {
+		r.log.Info("agent log refreshed", "entries", count)
+	}
 }

@@ -65,6 +65,34 @@ type Signal struct {
 
 	// TokenOut is the address of the token to buy.
 	TokenOut string
+
+	// Ritual carries the runtime metadata that produced this signal when the
+	// decision came from a fest-backed ritual run.
+	Ritual *RitualMetadata
+}
+
+// RitualGuardrails captures the minimum trade constraints emitted by a ritual.
+type RitualGuardrails struct {
+	TradeAllowed          bool
+	MinConfidenceRequired float64
+	MinNetProfitUSD       float64
+	MinCREGatesPassed     int
+	MaxSlippageBps        int
+}
+
+// RitualMetadata preserves the runtime context that led to a signal.
+type RitualMetadata struct {
+	RitualID        string
+	RitualRunID     string
+	Workdir         string
+	SessionID       string
+	Provider        string
+	Model           string
+	Summary         string
+	DecisionPath    string
+	AgentLogPath    string
+	BlockingFactors []string
+	Guardrails      RitualGuardrails
 }
 
 // Trade represents a DEX trade to be executed.

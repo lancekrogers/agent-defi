@@ -1,0 +1,9 @@
+{
+  "action": "ritual_run",
+  "dest_path": "/Users/lancerogers/Dev/Crypto/ETHDENVER/Obey-Agent-Economy/festivals/active/agent-market-research-RI-AM0001-0003",
+  "hex_counter": "0003",
+  "ritual": "agent-market-research-RI-AM0001",
+  "run_dir": "agent-market-research-RI-AM0001-0003",
+  "run_number": 3,
+  "success": true
+}

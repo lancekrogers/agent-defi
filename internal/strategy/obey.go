@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/lancekrogers/agent-defi/internal/festruntime"
 )
 
 // ObeyClient implements LLMClient using the obey daemon session system.
@@ -16,7 +18,9 @@ type ObeyClient struct {
 	Campaign  string // campaign name
 	Provider  string // AI provider (e.g., "claude-code")
 	Model     string // model name (e.g., "claude-sonnet-4-6")
+	Agent     string // obey agent name
 	Festival  string // festival ID (optional)
+	Workdir   string // working directory for session execution (optional)
 	SessionID string // reused across calls once created
 }
 
@@ -28,27 +32,57 @@ func (c *ObeyClient) Complete(ctx context.Context, prompt string) (string, error
 
 	// Create session on first call
 	if c.SessionID == "" {
-		id, err := c.createSession(ctx)
+		meta, err := c.CreateSession(ctx, festruntime.SessionRequest{
+			Festival: c.Festival,
+			Workdir:  c.Workdir,
+		})
 		if err != nil {
 			return "", fmt.Errorf("obey: create session: %w", err)
 		}
-		c.SessionID = id
+		c.SessionID = meta.SessionID
 	}
 
 	return c.sendMessage(ctx, prompt)
 }
 
-func (c *ObeyClient) createSession(ctx context.Context) (string, error) {
+// Preflight fails closed when the obey binary or daemon path is unavailable.
+func (c *ObeyClient) Preflight(ctx context.Context) error {
+	if _, err := exec.LookPath("obey"); err != nil {
+		return fmt.Errorf("obey binary not found: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, "obey", "ping", "--socket", c.socket())
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("obey ping failed: %w: %s", err, stderr.String())
+	}
+	return nil
+}
+
+// CreateSession creates one obey session with the given ritual context.
+func (c *ObeyClient) CreateSession(ctx context.Context, req festruntime.SessionRequest) (festruntime.SessionMeta, error) {
 	args := []string{
 		"session", "create",
 		"--socket", c.socket(),
 		"--campaign", c.Campaign,
 		"--provider", c.provider(),
 		"--model", c.model(),
-		"--agent", "vault-trader",
+		"--agent", c.agent(),
 	}
-	if c.Festival != "" {
-		args = append(args, "--festival", c.Festival)
+	festival := c.Festival
+	if req.Festival != "" {
+		festival = req.Festival
+	}
+	if festival != "" {
+		args = append(args, "--festival", festival)
+	}
+	workdir := c.Workdir
+	if req.Workdir != "" {
+		workdir = req.Workdir
+	}
+	if workdir != "" {
+		args = append(args, "--workdir", workdir)
 	}
 
 	cmd := exec.CommandContext(ctx, "obey", args...)
@@ -57,24 +91,51 @@ func (c *ObeyClient) createSession(ctx context.Context) (string, error) {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("obey session create failed: %w: %s", err, stderr.String())
+		return festruntime.SessionMeta{}, fmt.Errorf("obey session create failed: %w: %s", err, stderr.String())
 	}
 
 	// Parse session ID from output like "Session: <uuid>"
 	for _, line := range strings.Split(stdout.String(), "\n") {
 		if strings.HasPrefix(line, "Session: ") {
-			return strings.TrimPrefix(line, "Session: "), nil
+			return festruntime.SessionMeta{
+				SessionID: strings.TrimPrefix(line, "Session: "),
+				Campaign:  c.Campaign,
+				Provider:  c.provider(),
+				Model:     c.model(),
+				Festival:  festival,
+				Workdir:   workdir,
+			}, nil
 		}
 	}
 
-	return "", fmt.Errorf("obey: could not parse session ID from: %s", stdout.String())
+	return festruntime.SessionMeta{}, fmt.Errorf("obey: could not parse session ID from: %s", stdout.String())
+}
+
+// RunPrompt creates a fresh session for a ritual run and sends the execution prompt.
+func (c *ObeyClient) RunPrompt(ctx context.Context, req festruntime.SessionRequest, prompt string) (festruntime.SessionMeta, string, error) {
+	if err := c.Preflight(ctx); err != nil {
+		return festruntime.SessionMeta{}, "", err
+	}
+	meta, err := c.CreateSession(ctx, req)
+	if err != nil {
+		return festruntime.SessionMeta{}, "", err
+	}
+	resp, err := c.sendMessageWithSession(ctx, meta.SessionID, prompt)
+	if err != nil {
+		return festruntime.SessionMeta{}, "", err
+	}
+	return meta, resp, nil
 }
 
 func (c *ObeyClient) sendMessage(ctx context.Context, message string) (string, error) {
+	return c.sendMessageWithSession(ctx, c.SessionID, message)
+}
+
+func (c *ObeyClient) sendMessageWithSession(ctx context.Context, sessionID, message string) (string, error) {
 	cmd := exec.CommandContext(ctx, "obey",
 		"session", "send",
 		"--socket", c.socket(),
-		c.SessionID,
+		sessionID,
 		message,
 	)
 	var stdout, stderr bytes.Buffer
@@ -107,4 +168,11 @@ func (c *ObeyClient) model() string {
 		return c.Model
 	}
 	return "claude-sonnet-4-6"
+}
+
+func (c *ObeyClient) agent() string {
+	if c.Agent != "" {
+		return c.Agent
+	}
+	return "vault-trader"
 }

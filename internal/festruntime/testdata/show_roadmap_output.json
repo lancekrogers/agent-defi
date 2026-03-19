@@ -1,0 +1,166 @@
+{
+  "festival": {
+    "id": "agent-market-research-RI-AM0001-0002",
+    "metadata_id": "RI-AM0001",
+    "name": "agent-market-research-RI-AM0001-0002",
+    "metadata_name": "agent-market-research",
+    "status": "active",
+    "path": "festivals/active/agent-market-research-RI-AM0001-0002",
+    "mod_time": "2026-03-19T01:22:31.958302843-06:00",
+    "created_at": "2026-03-16T21:06:06.172823-06:00",
+    "updated_at": "2026-03-19T01:22:31.958302843-06:00",
+    "stats": {
+      "phases": {
+        "total": 3,
+        "completed": 3,
+        "in_progress": 0,
+        "pending": 0
+      },
+      "sequences": {
+        "total": 1,
+        "completed": 1,
+        "in_progress": 0,
+        "pending": 0
+      },
+      "tasks": {
+        "total": 16,
+        "completed": 16,
+        "in_progress": 0,
+        "pending": 0
+      },
+      "gates": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0
+      },
+      "progress": 100
+    }
+  },
+  "roadmap": {
+    "festival_path": "/Users/lancerogers/Dev/Crypto/ETHDENVER/Obey-Agent-Economy/festivals/active/agent-market-research-RI-AM0001-0002",
+    "phases": [
+      {
+        "name": "003_DECIDE",
+        "path": "/Users/lancerogers/Dev/Crypto/ETHDENVER/Obey-Agent-Economy/festivals/active/agent-market-research-RI-AM0001-0002/003_DECIDE",
+        "number": 3,
+        "sequences": [
+          {
+            "name": "01_synthesize_decision",
+            "path": "",
+            "number": 1,
+            "steps": [
+              {
+                "number": 1,
+                "type": "sequential",
+                "tasks": [
+                  {
+                    "id": "/Users/lancerogers/Dev/Crypto/ETHDENVER/Obey-Agent-Economy/festivals/active/agent-market-research-RI-AM0001-0002/003_DECIDE/01_synthesize_decision/01_aggregate_findings.md",
+                    "name": "01_aggregate_findings",
+                    "path": "/Users/lancerogers/Dev/Crypto/ETHDENVER/Obey-Agent-Economy/festivals/active/agent-market-research-RI-AM0001-0002/003_DECIDE/01_synthesize_decision/01_aggregate_findings.md",
+                    "number": 1,
+                    "autonomy_level": "",
+                    "status": "completed",
+                    "is_gate": false
+                  }
+                ],
+                "parallel": false
+              },
+              {
+                "number": 2,
+                "type": "sequential",
+                "tasks": [
+                  {
+                    "id": "/Users/lancerogers/Dev/Crypto/ETHDENVER/Obey-Agent-Economy/festivals/active/agent-market-research-RI-AM0001-0002/003_DECIDE/01_synthesize_decision/02_produce_decision.md",
+                    "name": "02_produce_decision",
+                    "path": "/Users/lancerogers/Dev/Crypto/ETHDENVER/Obey-Agent-Economy/festivals/active/agent-market-research-RI-AM0001-0002/003_DECIDE/01_synthesize_decision/02_produce_decision.md",
+                    "number": 2,
+                    "autonomy_level": "",
+                    "status": "completed",
+                    "is_gate": false
+                  }
+                ],
+                "parallel": false
+              },
+              {
+                "number": 3,
+                "type": "sequential",
+                "tasks": [
+                  {
+                    "id": "/Users/lancerogers/Dev/Crypto/ETHDENVER/Obey-Agent-Economy/festivals/active/agent-market-research-RI-AM0001-0002/003_DECIDE/01_synthesize_decision/03_generate_log_entry.md",
+                    "name": "03_generate_log_entry",
+                    "path": "/Users/lancerogers/Dev/Crypto/ETHDENVER/Obey-Agent-Economy/festivals/active/agent-market-research-RI-AM0001-0002/003_DECIDE/01_synthesize_decision/03_generate_log_entry.md",
+                    "number": 3,
+                    "autonomy_level": "",
+                    "status": "completed",
+                    "is_gate": false
+                  }
+                ],
+                "parallel": false
+              },
+              {
+                "number": 4,
+                "type": "sequential",
+                "tasks": [
+                  {
+                    "id": "/Users/lancerogers/Dev/Crypto/ETHDENVER/Obey-Agent-Economy/festivals/active/agent-market-research-RI-AM0001-0002/003_DECIDE/01_synthesize_decision/04_validate_decision.md",
+                    "name": "04_validate_decision",
+                    "path": "/Users/lancerogers/Dev/Crypto/ETHDENVER/Obey-Agent-Economy/festivals/active/agent-market-research-RI-AM0001-0002/003_DECIDE/01_synthesize_decision/04_validate_decision.md",
+                    "number": 4,
+                    "autonomy_level": "",
+                    "status": "completed",
+                    "is_gate": false
+                  }
+                ],
+                "parallel": false
+              },
+              {
+                "number": 5,
+                "type": "sequential",
+                "tasks": [
+                  {
+                    "id": "/Users/lancerogers/Dev/Crypto/ETHDENVER/Obey-Agent-Economy/festivals/active/agent-market-research-RI-AM0001-0002/003_DECIDE/01_synthesize_decision/05_review_rationale.md",
+                    "name": "05_review_rationale",
+                    "path": "/Users/lancerogers/Dev/Crypto/ETHDENVER/Obey-Agent-Economy/festivals/active/agent-market-research-RI-AM0001-0002/003_DECIDE/01_synthesize_decision/05_review_rationale.md",
+                    "number": 5,
+                    "autonomy_level": "",
+                    "status": "completed",
+                    "is_gate": false
+                  }
+                ],
+                "parallel": false
+              },
+              {
+                "number": 6,
+                "type": "sequential",
+                "tasks": [
+                  {
+                    "id": "/Users/lancerogers/Dev/Crypto/ETHDENVER/Obey-Agent-Economy/festivals/active/agent-market-research-RI-AM0001-0002/003_DECIDE/01_synthesize_decision/06_iterate_if_needed.md",
+                    "name": "06_iterate_if_needed",
+                    "path": "/Users/lancerogers/Dev/Crypto/ETHDENVER/Obey-Agent-Economy/festivals/active/agent-market-research-RI-AM0001-0002/003_DECIDE/01_synthesize_decision/06_iterate_if_needed.md",
+                    "number": 6,
+                    "autonomy_level": "",
+                    "status": "completed",
+                    "is_gate": false
+                  }
+                ],
+                "parallel": false
+              }
+            ],
+            "total_tasks": 6,
+            "status": "pending"
+          }
+        ],
+        "total_tasks": 6,
+        "status": "pending"
+      }
+    ],
+    "summary": {
+      "total_phases": 1,
+      "total_sequences": 1,
+      "total_tasks": 6,
+      "total_steps": 6,
+      "parallel_groups": 0,
+      "quality_gates": 0
+    }
+  }
+}
