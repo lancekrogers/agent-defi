@@ -82,6 +82,7 @@ type RitualGuardrails struct {
 
 // RitualMetadata preserves the runtime context that led to a signal.
 type RitualMetadata struct {
+	Campaign        string
 	RitualID        string
 	RitualRunID     string
 	Workdir         string

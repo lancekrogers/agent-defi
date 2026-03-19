@@ -94,6 +94,7 @@ func (r *Runner) cycle(ctx context.Context) error {
 		args := []any{"type", signal.Type, "confidence", signal.Confidence, "reason", signal.Reason}
 		if signal.Ritual != nil {
 			args = append(args,
+				"campaign", signal.Ritual.Campaign,
 				"ritual_id", signal.Ritual.RitualID,
 				"ritual_run_id", signal.Ritual.RitualRunID,
 				"session_id", signal.Ritual.SessionID,

@@ -1,7 +1,10 @@
 package festruntime
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,17 +16,20 @@ import (
 )
 
 type fakeSessionRunner struct {
-	meta       SessionMeta
-	lastReq    SessionRequest
-	lastPrompt string
-	writeFn    func(req SessionRequest) error
+	preflightErr error
+	meta         SessionMeta
+	lastReq      SessionRequest
+	lastPrompt   string
+	runCalls     int
+	writeFn      func(req SessionRequest) error
 }
 
 func (f *fakeSessionRunner) Preflight(ctx context.Context) error {
-	return nil
+	return f.preflightErr
 }
 
 func (f *fakeSessionRunner) RunPrompt(ctx context.Context, req SessionRequest, prompt string) (SessionMeta, string, error) {
+	f.runCalls++
 	f.lastReq = req
 	f.lastPrompt = prompt
 	if f.writeFn != nil {
@@ -244,6 +250,127 @@ func TestRuntimeEvaluateFailsOnMalformedDecisionArtifact(t *testing.T) {
 	}
 }
 
+func TestRuntimeEvaluateFailsClosedWhenPreflightFails(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	session := &fakeSessionRunner{
+		preflightErr: errors.New("daemon unavailable"),
+	}
+
+	runtime, err := New(Config{
+		CampaignRoot: root,
+		RitualID:     "agent-market-research-RI-AM0001",
+		FestBinary:   filepath.Join(root, "missing-fest"),
+		TokenIn:      "0xusdc",
+		TokenOut:     "0xweth",
+	}, session)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	_, err = runtime.Evaluate(context.Background(), trading.MarketState{Price: 500})
+	if err == nil {
+		t.Fatal("Evaluate() error = nil, want preflight failure")
+	}
+	if !strings.Contains(err.Error(), "obey preflight") {
+		t.Fatalf("error = %v, want obey preflight context", err)
+	}
+	if session.runCalls != 0 {
+		t.Fatalf("runCalls = %d, want 0", session.runCalls)
+	}
+}
+
+func TestRuntimeEvaluateLogsSessionMetadata(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	runDir := filepath.Join(root, "festivals", "active", "agent-market-research-RI-AM0001-0001")
+	fest := writeFakeFest(t, root, runDir, 0, 100)
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	session := &fakeSessionRunner{
+		meta: SessionMeta{
+			SessionID: "session-123",
+			Campaign:  "Obey-Agent-Economy",
+			Provider:  "test-provider",
+			Model:     "test-model",
+			Festival:  "agent-market-research-RI-AM0001-0001",
+			Workdir:   runDir,
+		},
+		writeFn: func(req SessionRequest) error {
+			resultsDir := filepath.Join(req.Workdir, "003_DECIDE", "01_synthesize_decision", "results")
+			if err := os.MkdirAll(resultsDir, 0o755); err != nil {
+				return err
+			}
+			decision := `{
+  "ritual_id": "RI-AM0001",
+  "ritual_run_id": "agent-market-research-RI-AM0001-0001",
+  "timestamp": "2026-03-19T07:00:00Z",
+  "decision": "NO_GO",
+  "confidence": 0.0,
+  "blocking_factors": ["no_signal"],
+  "rationale": {
+    "summary": "NO_GO because the ritual found no mean-reversion signal."
+  },
+  "guardrails": {
+    "trade_allowed": false,
+    "min_confidence_required": 0.5,
+    "min_net_profit_usd": 1.0,
+    "min_cre_gates_passed": 6,
+    "max_slippage_bps": 100
+  },
+  "artifact_paths": {
+    "decision": "003_DECIDE/01_synthesize_decision/results/decision.json",
+    "agent_log_entry": "003_DECIDE/01_synthesize_decision/results/agent_log_entry.json"
+  }
+}`
+			if err := os.WriteFile(filepath.Join(resultsDir, "decision.json"), []byte(decision), 0o644); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(resultsDir, "agent_log_entry.json"), []byte(`{"ok":true}`), 0o644)
+		},
+	}
+
+	runtime, err := New(Config{
+		CampaignRoot: root,
+		RitualID:     "agent-market-research-RI-AM0001",
+		FestBinary:   fest,
+		TokenIn:      "0xusdc",
+		TokenOut:     "0xweth",
+		PollInterval: time.Millisecond,
+		Timeout:      50 * time.Millisecond,
+		Logger:       logger,
+	}, session)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	signal, err := runtime.Evaluate(context.Background(), trading.MarketState{Price: 500})
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	if signal.Ritual == nil || signal.Ritual.Campaign != "Obey-Agent-Economy" {
+		t.Fatalf("ritual campaign = %#v, want Obey-Agent-Economy", signal.Ritual)
+	}
+
+	logged := logBuf.String()
+	for _, want := range []string{
+		`"msg":"ritual runtime completed"`,
+		`"campaign":"Obey-Agent-Economy"`,
+		`"ritual_run_id":"agent-market-research-RI-AM0001-0001"`,
+		`"session_id":"session-123"`,
+		`"provider":"test-provider"`,
+		`"model":"test-model"`,
+		`"workdir":"` + runDir + `"`,
+	} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("logged output missing %q:\n%s", want, logged)
+		}
+	}
+}
+
 func TestParseRunOutputAcceptsRealFestPayload(t *testing.T) {
 	t.Parallel()
 
@@ -334,6 +461,7 @@ func TestRuntimeSignalFromDecisionBuildsBuySignal(t *testing.T) {
 		},
 	}, trading.MarketState{Price: 500}, SessionMeta{
 		SessionID: "session-123",
+		Campaign:  "Obey-Agent-Economy",
 		Provider:  "test-provider",
 		Model:     "test-model",
 		Workdir:   "/tmp/run",
@@ -356,6 +484,9 @@ func TestRuntimeSignalFromDecisionBuildsBuySignal(t *testing.T) {
 	}
 	if signal.Ritual == nil || signal.Ritual.DecisionPath == "" || signal.Ritual.AgentLogPath == "" {
 		t.Fatalf("ritual metadata missing artifact paths: %#v", signal.Ritual)
+	}
+	if signal.Ritual.Campaign != "Obey-Agent-Economy" {
+		t.Fatalf("ritual campaign = %q, want Obey-Agent-Economy", signal.Ritual.Campaign)
 	}
 }
 

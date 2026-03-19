@@ -257,6 +257,7 @@ func (r *Runtime) Evaluate(ctx context.Context, market trading.MarketState) (*tr
 
 	if r.cfg.Logger != nil {
 		r.cfg.Logger.Info("ritual runtime completed",
+			"campaign", sessionMeta.Campaign,
 			"ritual_id", decision.RitualID,
 			"ritual_run_id", decision.RitualRunID,
 			"session_id", sessionMeta.SessionID,
@@ -365,6 +366,7 @@ func (r *Runtime) signalFromDecision(decision Decision, market trading.MarketSta
 		TokenIn:     r.cfg.TokenIn,
 		TokenOut:    r.cfg.TokenOut,
 		Ritual: &trading.RitualMetadata{
+			Campaign:        sessionMeta.Campaign,
 			RitualID:        decision.RitualID,
 			RitualRunID:     decision.RitualRunID,
 			Workdir:         sessionMeta.Workdir,
