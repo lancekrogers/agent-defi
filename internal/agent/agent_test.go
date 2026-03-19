@@ -607,6 +607,17 @@ func TestLoadConfig_RequiredFields(t *testing.T) {
 
 func TestLoadConfig_Defaults(t *testing.T) {
 	t.Setenv("DEFI_AGENT_ID", "test-defi-123")
+	// Clear env vars that .env may set so we actually test defaults.
+	t.Setenv("DEFI_DAEMON_ADDR", "")
+	t.Setenv("DEFI_BASE_RPC_URL", "")
+	t.Setenv("DEFI_DEX_ROUTER", "")
+	t.Setenv("DEFI_TOKEN_IN", "")
+	t.Setenv("DEFI_TOKEN_OUT", "")
+	t.Setenv("DEFI_MARKET_DATA_COST_WEI", "")
+	t.Setenv("DEFI_MOCK_MODE", "")
+	t.Setenv("DEFI_TRADING_INTERVAL", "")
+	t.Setenv("DEFI_PNL_REPORT_INTERVAL", "")
+	t.Setenv("DEFI_HEALTH_INTERVAL", "")
 
 	cfg, err := LoadConfig()
 	if err != nil {

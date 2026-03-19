@@ -82,3 +82,117 @@ func TestObeyClientRunPromptPassesFestivalAndWorkdir(t *testing.T) {
 		}
 	}
 }
+
+func TestObeyClientPreflightFailsWhenPingFails(t *testing.T) {
+	tmp := t.TempDir()
+	binDir := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	script := filepath.Join(binDir, "obey")
+	content := strings.Join([]string{
+		"#!/bin/sh",
+		"if [ \"$1\" = \"ping\" ]; then",
+		"  echo \"daemon unavailable\" >&2",
+		"  exit 1",
+		"fi",
+		"exit 0",
+	}, "\n")
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatalf("write obey script: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &ObeyClient{Socket: "/tmp/obey.sock"}
+	err := client.Preflight(context.Background())
+	if err == nil {
+		t.Fatal("Preflight() error = nil, want ping failure")
+	}
+	if !strings.Contains(err.Error(), "obey ping failed") {
+		t.Fatalf("error = %v, want ping failure context", err)
+	}
+}
+
+func TestObeyClientRunPromptFailsWhenSessionIDMissing(t *testing.T) {
+	tmp := t.TempDir()
+	binDir := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	script := filepath.Join(binDir, "obey")
+	content := strings.Join([]string{
+		"#!/bin/sh",
+		"if [ \"$1\" = \"ping\" ]; then",
+		"  exit 0",
+		"fi",
+		"if [ \"$1\" = \"session\" ] && [ \"$2\" = \"create\" ]; then",
+		"  echo \"created but no session id\"",
+		"  exit 0",
+		"fi",
+		"exit 1",
+	}, "\n")
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatalf("write obey script: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &ObeyClient{
+		Socket:   "/tmp/obey.sock",
+		Campaign: "Obey-Agent-Economy",
+	}
+
+	_, _, err := client.RunPrompt(context.Background(), festruntime.SessionRequest{
+		Festival: "agent-market-research-RI-AM0001-0002",
+		Workdir:  "/tmp/ritual-run",
+	}, "complete the ritual")
+	if err == nil {
+		t.Fatal("RunPrompt() error = nil, want session parse failure")
+	}
+	if !strings.Contains(err.Error(), "could not parse session ID") {
+		t.Fatalf("error = %v, want session id parse failure", err)
+	}
+}
+
+func TestObeyClientRunPromptPropagatesSessionSendFailure(t *testing.T) {
+	tmp := t.TempDir()
+	binDir := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	script := filepath.Join(binDir, "obey")
+	content := strings.Join([]string{
+		"#!/bin/sh",
+		"if [ \"$1\" = \"ping\" ]; then",
+		"  exit 0",
+		"fi",
+		"if [ \"$1\" = \"session\" ] && [ \"$2\" = \"create\" ]; then",
+		"  echo \"Session: session-123\"",
+		"  exit 0",
+		"fi",
+		"if [ \"$1\" = \"session\" ] && [ \"$2\" = \"send\" ]; then",
+		"  echo \"send failed\" >&2",
+		"  exit 1",
+		"fi",
+		"exit 1",
+	}, "\n")
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatalf("write obey script: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &ObeyClient{
+		Socket:   "/tmp/obey.sock",
+		Campaign: "Obey-Agent-Economy",
+	}
+
+	_, _, err := client.RunPrompt(context.Background(), festruntime.SessionRequest{
+		Festival: "agent-market-research-RI-AM0001-0002",
+		Workdir:  "/tmp/ritual-run",
+	}, "complete the ritual")
+	if err == nil {
+		t.Fatal("RunPrompt() error = nil, want send failure")
+	}
+	if !strings.Contains(err.Error(), "obey session send failed") {
+		t.Fatalf("error = %v, want send failure context", err)
+	}
+}

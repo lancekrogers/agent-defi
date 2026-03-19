@@ -1,5 +1,7 @@
 # Test recipes for agent-defi
 
+set working-directory := '..'
+
 @default:
     just --list --justfile {{source_file()}}
 
