@@ -42,7 +42,7 @@ func TestObeyClientRunPromptPassesFestivalAndWorkdir(t *testing.T) {
 	client := &ObeyClient{
 		Socket:   "/tmp/obey.sock",
 		Campaign: "Obey-Agent-Economy",
-		Provider: "test-provider",
+		Provider: "claude-code",
 		Model:    "test-model",
 		Agent:    "vault-trader",
 	}
@@ -71,10 +71,11 @@ func TestObeyClientRunPromptPassesFestivalAndWorkdir(t *testing.T) {
 		"--campaign Obey-Agent-Economy",
 		"--festival agent-market-research-RI-AM0001-0002",
 		"--workdir /tmp/ritual-run",
-		"--provider test-provider",
+		"--provider claude-code",
 		"--model test-model",
 		"--agent vault-trader",
-		"session send --socket /tmp/obey.sock session-123 complete the ritual",
+		`--config {"permission_mode":"bypassPermissions"}`,
+		"session send --socket /tmp/obey.sock --campaign Obey-Agent-Economy --mode autonomous session-123 complete the ritual",
 	} {
 		if !strings.Contains(logged, want) {
 			t.Fatalf("logged args missing %q:\n%s", want, logged)

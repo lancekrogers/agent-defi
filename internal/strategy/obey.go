@@ -21,6 +21,7 @@ type ObeyClient struct {
 	Agent     string // obey agent name
 	Festival  string // festival ID (optional)
 	Workdir   string // working directory for session execution (optional)
+	Config    string // provider session config JSON (optional)
 	SessionID string // reused across calls once created
 }
 
@@ -84,6 +85,9 @@ func (c *ObeyClient) CreateSession(ctx context.Context, req festruntime.SessionR
 	if workdir != "" {
 		args = append(args, "--workdir", workdir)
 	}
+	if config := c.configJSON(); config != "" {
+		args = append(args, "--config", config)
+	}
 
 	cmd := exec.CommandContext(ctx, "obey", args...)
 	var stdout, stderr bytes.Buffer
@@ -135,6 +139,8 @@ func (c *ObeyClient) sendMessageWithSession(ctx context.Context, sessionID, mess
 	cmd := exec.CommandContext(ctx, "obey",
 		"session", "send",
 		"--socket", c.socket(),
+		"--campaign", c.Campaign,
+		"--mode", "autonomous",
 		sessionID,
 		message,
 	)
@@ -175,4 +181,14 @@ func (c *ObeyClient) agent() string {
 		return c.Agent
 	}
 	return "vault-trader"
+}
+
+func (c *ObeyClient) configJSON() string {
+	if c.Config != "" {
+		return c.Config
+	}
+	if c.provider() == "claude-code" {
+		return `{"permission_mode":"bypassPermissions"}`
+	}
+	return ""
 }

@@ -27,6 +27,98 @@
       "duration_ms": 147459
     },
     {
+      "timestamp": "2026-03-19T09:21:52.624Z",
+      "phase": "discover",
+      "action": "market_research_ritual",
+      "festival_id": "RI-AM0001",
+      "tools_used": [
+        "uniswap_v3_pool_query",
+        "historical_slot0_sampling",
+        "cre_risk_router_8gate",
+        "obey_vault_state_query"
+      ],
+      "decision": "GO",
+      "reasoning": {
+        "confidence": 0.75,
+        "deviation_pct": 39.912149268818794,
+        "gates_passed": "6/8",
+        "net_profit_estimate_usd": 197.5606558497481,
+        "signal": "SELL"
+      },
+      "retries": 0,
+      "errors": null,
+      "duration_ms": 189912
+    },
+    {
+      "timestamp": "2026-03-19T09:21:52.627Z",
+      "phase": "discover",
+      "action": "market_research_ritual",
+      "festival_id": "RI-AM0001",
+      "tools_used": [
+        "uniswap_v3_pool_query",
+        "historical_slot0_sampling",
+        "cre_risk_router_8gate",
+        "obey_vault_state_query"
+      ],
+      "decision": "GO",
+      "reasoning": {
+        "confidence": 0.75,
+        "deviation_pct": 39.912149268818794,
+        "gates_passed": "6/8",
+        "net_profit_estimate_usd": 197.5606558497481,
+        "signal": "SELL"
+      },
+      "retries": 0,
+      "errors": null,
+      "duration_ms": 189912
+    },
+    {
+      "timestamp": "2026-03-19T09:21:52.630Z",
+      "phase": "discover",
+      "action": "market_research_ritual",
+      "festival_id": "RI-AM0001",
+      "tools_used": [
+        "uniswap_v3_pool_query",
+        "historical_slot0_sampling",
+        "cre_risk_router_8gate",
+        "obey_vault_state_query"
+      ],
+      "decision": "GO",
+      "reasoning": {
+        "confidence": 0.75,
+        "deviation_pct": 39.912149268818794,
+        "gates_passed": "6/8",
+        "net_profit_estimate_usd": 197.5606558497481,
+        "signal": "SELL"
+      },
+      "retries": 0,
+      "errors": null,
+      "duration_ms": 189912
+    },
+    {
+      "timestamp": "2026-03-19T09:24:00.500Z",
+      "phase": "discover",
+      "action": "market_research_ritual",
+      "festival_id": "RI-AM0001",
+      "tools_used": [
+        "uniswap_v3_pool_query",
+        "historical_slot0_sampling",
+        "cre_risk_router_8gate",
+        "obey_vault_state_query"
+      ],
+      "decision": "NO_GO",
+      "reasoning": {
+        "confidence": 0.75,
+        "deviation_pct": 39.913030747437325,
+        "gates_passed": "6/8",
+        "net_profit_estimate_usd": 197.56506324284075,
+        "signal": "SELL"
+      },
+      "retries": 0,
+      "errors": null,
+      "duration_ms": 189913
+    },
+    {
       "timestamp": "2026-03-17T07:13:32Z",
       "phase": "execute",
       "action": "vault_swap",

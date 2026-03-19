@@ -122,6 +122,24 @@ func TestRuntimeEvaluateReturnsHoldForNoGoDecision(t *testing.T) {
 	if !strings.Contains(session.lastPrompt, "fest commands") {
 		t.Fatalf("prompt = %q, want ritual completion instructions", session.lastPrompt)
 	}
+	if !strings.Contains(session.lastPrompt, runDir) {
+		t.Fatalf("prompt = %q, want run workdir", session.lastPrompt)
+	}
+	if !strings.Contains(session.lastPrompt, "agent-market-research-RI-AM0001-0001") {
+		t.Fatalf("prompt = %q, want run id", session.lastPrompt)
+	}
+	if !strings.Contains(session.lastPrompt, "fest context") {
+		t.Fatalf("prompt = %q, want explicit fest context verification", session.lastPrompt)
+	}
+	if !strings.Contains(session.lastPrompt, "&& fest next") {
+		t.Fatalf("prompt = %q, want self-contained fest commands", session.lastPrompt)
+	}
+	if !strings.Contains(session.lastPrompt, "do not rely on a prior standalone `cd`") {
+		t.Fatalf("prompt = %q, want shell-isolation guidance", session.lastPrompt)
+	}
+	if !strings.Contains(session.lastPrompt, "Do not search other campaigns") {
+		t.Fatalf("prompt = %q, want scoped workspace guardrail", session.lastPrompt)
+	}
 }
 
 func TestRuntimeEvaluateTimesOutWhenArtifactsNeverAppear(t *testing.T) {

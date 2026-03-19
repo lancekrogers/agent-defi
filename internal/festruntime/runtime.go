@@ -232,10 +232,11 @@ func (r *Runtime) Evaluate(ctx context.Context, market trading.MarketState) (*tr
 		)
 	}
 
-	sessionMeta, _, err := r.session.RunPrompt(ctx, SessionRequest{
+	req := SessionRequest{
 		Festival: run.ID,
 		Workdir:  run.Path,
-	}, r.cfg.Prompt)
+	}
+	sessionMeta, _, err := r.session.RunPrompt(ctx, req, r.promptForRun(req))
 	if err != nil {
 		return nil, fmt.Errorf("festruntime: execute ritual run %s: %w", run.ID, err)
 	}
@@ -327,6 +328,32 @@ func (r *Runtime) waitForArtifacts(ctx context.Context, run runInfo) (showOutput
 		case <-ticker.C:
 		}
 	}
+}
+
+func (r *Runtime) promptForRun(req SessionRequest) string {
+	var b strings.Builder
+	b.WriteString(strings.TrimSpace(r.cfg.Prompt))
+	b.WriteString("\n\nRuntime context:\n")
+	if req.Festival != "" {
+		fmt.Fprintf(&b, "- Active ritual run ID: %s\n", req.Festival)
+	}
+	if req.Workdir != "" {
+		fmt.Fprintf(&b, "- Active ritual workdir: %s\n", req.Workdir)
+	}
+	b.WriteString("\nRequired first actions:\n")
+	if req.Workdir != "" {
+		fmt.Fprintf(&b, "1. Change directory to %s before running any fest commands.\n", req.Workdir)
+		fmt.Fprintf(&b, "2. Every bash command that uses fest must start with `cd %s && ...`; do not rely on a prior standalone `cd`, because each shell call may start in a fresh working directory.\n", req.Workdir)
+		fmt.Fprintf(&b, "3. First run `cd %s && fest context` and confirm it resolves to the active ritual run ID before proceeding.\n", req.Workdir)
+		fmt.Fprintf(&b, "4. Execute the ritual workflow to completion with commands such as `cd %s && fest next` and `cd %s && fest workflow advance` until the required artifacts exist.\n", req.Workdir, req.Workdir)
+	} else {
+		b.WriteString("1. Change directory into the active ritual workdir before running any fest commands.\n")
+		b.WriteString("2. Use a single bash command per fest action so the workdir is explicit; do not rely on a prior standalone `cd`.\n")
+		b.WriteString("3. First run `fest context` from inside the active ritual workdir and confirm it resolves to the active ritual run ID before proceeding.\n")
+		b.WriteString("4. Execute the ritual workflow to completion with `fest next` and `fest workflow advance` from inside that same workdir until the required artifacts exist.\n")
+	}
+	b.WriteString("5. Do not search other campaigns, repos, or ritual templates; everything needed for this run is already in the active ritual workdir.\n")
+	return b.String()
 }
 
 func (r *Runtime) showRoadmap(ctx context.Context, festivalID string) (showOutput, error) {
