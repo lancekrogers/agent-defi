@@ -64,17 +64,17 @@ type VerifyDetail struct {
 
 // RitualLogEntry is the single JSON object written by each ritual run.
 type RitualLogEntry struct {
-	Action       string         `json:"action"`
-	Timestamp    string         `json:"timestamp"`
-	Phase        string         `json:"phase"`
-	FestivalID   string         `json:"festival_id"`
-	RunID        string         `json:"run_id"`
-	Decision     string         `json:"decision"`
-	Reasoning    map[string]any `json:"reasoning"`
-	ToolsUsed    []string       `json:"tools_used"`
-	Retries      int            `json:"retries"`
-	DurationMS   int64          `json:"duration_ms"`
-	Errors       []string       `json:"errors"`
+	Action        string         `json:"action"`
+	Timestamp     string         `json:"timestamp"`
+	Phase         string         `json:"phase"`
+	FestivalID    string         `json:"festival_id"`
+	RunID         string         `json:"run_id"`
+	Decision      string         `json:"decision"`
+	Reasoning     map[string]any `json:"reasoning"`
+	ToolsUsed     []string       `json:"tools_used"`
+	Retries       int            `json:"retries"`
+	DurationMS    int64          `json:"duration_ms"`
+	Errors        []string       `json:"errors"`
 	ArtifactPaths map[string]any `json:"artifact_paths,omitempty"`
 }
 
@@ -90,7 +90,7 @@ type Config struct {
 
 // Refresher rebuilds agent_log.json from ritual outputs and on-chain events.
 type Refresher struct {
-	Config Config
+	Config  Config
 	OutFile string
 }
 
@@ -250,7 +250,7 @@ func LoadSwapEvents(ctx context.Context, rpcURL, vaultAddrHex string, fromBlock 
 			header, err := ethClient.HeaderByNumber(ctx, new(big.Int).SetUint64(evt.Raw.BlockNumber))
 			if err != nil {
 				log.Printf("warning: get block %d header: %v", evt.Raw.BlockNumber, err)
-				iter.Close()
+				_ = iter.Close()
 				continue
 			}
 
@@ -283,10 +283,10 @@ func LoadSwapEvents(ctx context.Context, rpcURL, vaultAddrHex string, fromBlock 
 		}
 
 		if iterErr := iter.Error(); iterErr != nil {
-			iter.Close()
+			_ = iter.Close()
 			return entries, errors.New("loggen: event iteration failed: " + iterErr.Error())
 		}
-		iter.Close()
+		_ = iter.Close()
 	}
 
 	return entries, nil

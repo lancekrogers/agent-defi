@@ -77,7 +77,7 @@ func main() {
 
 	// Connect to daemon runtime (optional — agent works standalone if unavailable).
 	daemonClient := connectDaemon(log, cfg.DaemonAddr)
-	defer daemonClient.Close()
+	defer func() { _ = daemonClient.Close() }()
 
 	// Wire the agent with all dependencies.
 	a := agent.New(*cfg, log, daemonClient, idRegistry, pay, executor, strategy, pnl, handler)

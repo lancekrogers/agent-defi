@@ -598,7 +598,7 @@ func TestRun_ReceivesAndProcessesTask(t *testing.T) {
 }
 
 func TestLoadConfig_RequiredFields(t *testing.T) {
-	os.Unsetenv("DEFI_AGENT_ID")
+	t.Setenv("DEFI_AGENT_ID", "")
 	_, err := LoadConfig()
 	if err == nil {
 		t.Fatal("expected error when DEFI_AGENT_ID is missing")

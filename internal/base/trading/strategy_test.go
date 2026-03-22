@@ -21,12 +21,12 @@ func testMarket(price, ma float64) MarketState {
 
 func testStrategy() *MeanReversionStrategy {
 	return NewMeanReversionStrategy(MeanReversionConfig{
-		TokenIn:         "0xusdc",
-		TokenOut:        "0xweth",
-		BuyThreshold:    0.02,
-		SellThreshold:   0.02,
-		MaxPositionSize: 1.0,
-		MinLiquidity:    1000,
+		TokenIn:            "0xusdc",
+		TokenOut:           "0xweth",
+		BuyThreshold:       0.02,
+		SellThreshold:      0.02,
+		MaxPositionSize:    1.0,
+		MinLiquidity:       1000,
 		DataStalenessLimit: 5 * time.Minute,
 	})
 }

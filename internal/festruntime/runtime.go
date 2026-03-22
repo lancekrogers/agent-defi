@@ -509,7 +509,7 @@ func parseRunOutput(out []byte, campaignRoot string) (runInfo, error) {
 	if err := json.Unmarshal(out, &parsed); err != nil {
 		return runInfo{}, fmt.Errorf("festruntime: parse ritual run json: %w", err)
 	}
-	if parsed.Success == false && parsed.Action == "ritual_run" {
+	if !parsed.Success && parsed.Action == "ritual_run" {
 		return runInfo{}, errors.New("festruntime: ritual run reported success=false")
 	}
 	if parsed.DestPath == "" {

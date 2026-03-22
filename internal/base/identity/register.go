@@ -143,7 +143,7 @@ func (r *registry) callRPC(ctx context.Context, method string, params []interfac
 	if err != nil {
 		return nil, fmt.Errorf("identity: RPC call failed: %w", ErrChainUnreachable)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var rpcResp rpcResponse
 	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
@@ -350,7 +350,7 @@ func (r *registry) decodeIdentity(agentID, hexResult string) (*Identity, error) 
 		ContractAddress: r.cfg.ContractAddress,
 		Status:          statusFromUint8(status),
 		IsVerified:      status == 1,
-		PublicKey:        signatureBytes,
+		PublicKey:       signatureBytes,
 		ChainID:         r.cfg.ChainID,
 	}
 
@@ -376,4 +376,3 @@ func statusFromUint8(s uint8) IdentityStatus {
 		return StatusPending
 	}
 }
-

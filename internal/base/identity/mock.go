@@ -36,7 +36,7 @@ func (m *mockRegistry) Register(_ context.Context, req RegistrationRequest) (*Id
 		OwnerAddress:    req.OwnerAddress,
 		Status:          StatusActive,
 		IsVerified:      true,
-		PublicKey:        req.PublicKey,
+		PublicKey:       req.PublicKey,
 		Metadata:        req.Metadata,
 		TxHash:          fmt.Sprintf("0xmock_%s_%d", req.AgentID, time.Now().UnixNano()),
 		ChainID:         BaseSepolia,

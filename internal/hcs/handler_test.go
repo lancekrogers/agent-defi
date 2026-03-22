@@ -83,7 +83,7 @@ func TestStartSubscription_ReceivesTask(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go h.StartSubscription(ctx)
+	go func() { _ = h.StartSubscription(ctx) }()
 
 	// Send a task assignment message.
 	payload, _ := json.Marshal(TaskAssignment{
@@ -123,7 +123,7 @@ func TestStartSubscription_FiltersOtherRecipients(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go h.StartSubscription(ctx)
+	go func() { _ = h.StartSubscription(ctx) }()
 
 	// Message addressed to a different agent - should be skipped.
 	payload, _ := json.Marshal(TaskAssignment{TaskID: "skip-me"})
@@ -213,7 +213,7 @@ func TestPublishPnL_Success(t *testing.T) {
 	}
 
 	var env Envelope
-	json.Unmarshal(mt.published[0], &env)
+	_ = json.Unmarshal(mt.published[0], &env)
 	if env.Type != MessageTypePnLReport {
 		t.Errorf("expected pnl_report, got %s", env.Type)
 	}
@@ -246,7 +246,7 @@ func TestPublishResult_Success(t *testing.T) {
 	}
 
 	var env Envelope
-	json.Unmarshal(mt.published[0], &env)
+	_ = json.Unmarshal(mt.published[0], &env)
 	if env.Type != MessageTypeTaskResult {
 		t.Errorf("expected task_result, got %s", env.Type)
 	}
@@ -275,7 +275,7 @@ func TestPublishHealth_Success(t *testing.T) {
 	}
 
 	var env Envelope
-	json.Unmarshal(mt.published[0], &env)
+	_ = json.Unmarshal(mt.published[0], &env)
 	if env.Type != MessageTypeHeartbeat {
 		t.Errorf("expected heartbeat, got %s", env.Type)
 	}
@@ -308,9 +308,9 @@ func TestPublish_SequenceIncrement(t *testing.T) {
 		AgentID:       "defi-agent-1",
 	})
 
-	h.PublishResult(context.Background(), TaskResult{TaskID: "t1"})
-	h.PublishPnL(context.Background(), PnLReportMessage{AgentID: "a"})
-	h.PublishHealth(context.Background(), HealthStatus{AgentID: "a"})
+	_ = h.PublishResult(context.Background(), TaskResult{TaskID: "t1"})
+	_ = h.PublishPnL(context.Background(), PnLReportMessage{AgentID: "a"})
+	_ = h.PublishHealth(context.Background(), HealthStatus{AgentID: "a"})
 
 	if len(mt.published) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(mt.published))
@@ -319,7 +319,7 @@ func TestPublish_SequenceIncrement(t *testing.T) {
 	seqs := make([]uint64, 3)
 	for i, data := range mt.published {
 		var env Envelope
-		json.Unmarshal(data, &env)
+		_ = json.Unmarshal(data, &env)
 		seqs[i] = env.SequenceNum
 	}
 

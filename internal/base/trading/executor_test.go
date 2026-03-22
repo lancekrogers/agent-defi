@@ -34,7 +34,7 @@ func rpcResultHandler(result interface{}) http.HandlerFunc {
 			"id":      1,
 			"result":  json.RawMessage(resultData),
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 }
 
@@ -66,7 +66,7 @@ func TestExecute_CalldataBuilt(t *testing.T) {
 	callCount := 0
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"jsonrpc": "2.0", "id": 1, "result": "0x1234567",
 		})
 	}
@@ -210,7 +210,7 @@ func TestGetMarketState_PoolQuery(t *testing.T) {
 		default:
 			result = "0x0"
 		}
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"jsonrpc": "2.0", "id": 1, "result": result,
 		})
 	}
@@ -261,7 +261,7 @@ func TestGetMarketState_NoPool(t *testing.T) {
 		default:
 			result = "0x0"
 		}
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"jsonrpc": "2.0", "id": 1, "result": result,
 		})
 	}

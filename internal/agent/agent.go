@@ -218,7 +218,7 @@ func (a *Agent) healthLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			report := a.pnl.Report(a.startTime, time.Now())
-			a.handler.PublishHealth(ctx, hcs.HealthStatus{
+			_ = a.handler.PublishHealth(ctx, hcs.HealthStatus{
 				AgentID:        a.cfg.AgentID,
 				Status:         "trading",
 				ActiveStrategy: a.strategy.Name(),
@@ -455,7 +455,7 @@ func (a *Agent) handleCoordinatorTask(ctx context.Context, task hcs.TaskAssignme
 		a.log.Error("coordinator task failed", "task_id", task.TaskID, "error", taskErr)
 	}
 
-	a.handler.PublishResult(ctx, hcs.TaskResult{
+	_ = a.handler.PublishResult(ctx, hcs.TaskResult{
 		TaskID:     task.TaskID,
 		Status:     status,
 		TxHash:     txHash,

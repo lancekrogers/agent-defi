@@ -69,7 +69,7 @@ func (c *Client) Register(ctx context.Context, req RegisterRequest) (*RegisterRe
 	if err != nil {
 		return nil, fmt.Errorf("synthesis: request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		return nil, fmt.Errorf("synthesis: unexpected status %d", resp.StatusCode)

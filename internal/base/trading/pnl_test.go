@@ -148,9 +148,9 @@ func TestPnLTracker_EmptyReport(t *testing.T) {
 func TestPnLTracker_NetPnL_Calculation(t *testing.T) {
 	tracker := NewPnLTracker()
 
-	tracker.RecordTrade(testTradeRecord(500, 400, true))  // revenue: 500
+	tracker.RecordTrade(testTradeRecord(500, 400, true)) // revenue: 500
 	tracker.RecordGasCost(GasCost{CostUSD: 25.0})        // gas: 25
-	tracker.RecordFee(Fee{AmountUSD: 10.0})               // fees: 10
+	tracker.RecordFee(Fee{AmountUSD: 10.0})              // fees: 10
 	// NetPnL = 500 - 25 - 10 = 465
 
 	report := reportAll(tracker)

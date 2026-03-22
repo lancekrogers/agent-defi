@@ -125,7 +125,7 @@ func LoadConfig() (*Config, error) {
 	cfg.HCS.AgentID = cfg.AgentID
 
 	// Trading pair.
-	cfg.TokenIn = envOr("DEFI_TOKEN_IN", "0x036CbD53842c5426634e7929541eC2318f3dCF7e")  // USDC on Base Sepolia
+	cfg.TokenIn = envOr("DEFI_TOKEN_IN", "0x036CbD53842c5426634e7929541eC2318f3dCF7e")   // USDC on Base Sepolia
 	cfg.TokenOut = envOr("DEFI_TOKEN_OUT", "0x4200000000000000000000000000000000000006") // WETH on Base Sepolia
 
 	// x402 market data payment.
