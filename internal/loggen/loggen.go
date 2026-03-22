@@ -250,7 +250,7 @@ func LoadSwapEvents(ctx context.Context, rpcURL, vaultAddrHex string, fromBlock 
 			header, err := ethClient.HeaderByNumber(ctx, new(big.Int).SetUint64(evt.Raw.BlockNumber))
 			if err != nil {
 				log.Printf("warning: get block %d header: %v", evt.Raw.BlockNumber, err)
-				iter.Close()
+				_ = iter.Close()
 				continue
 			}
 
@@ -283,10 +283,10 @@ func LoadSwapEvents(ctx context.Context, rpcURL, vaultAddrHex string, fromBlock 
 		}
 
 		if iterErr := iter.Error(); iterErr != nil {
-			iter.Close()
+			_ = iter.Close()
 			return entries, errors.New("loggen: event iteration failed: " + iterErr.Error())
 		}
-		iter.Close()
+		_ = iter.Close()
 	}
 
 	return entries, nil

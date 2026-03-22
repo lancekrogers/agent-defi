@@ -35,7 +35,7 @@ func balanceHandler(balanceHex string) http.HandlerFunc {
 			"id":      1,
 			"result":  balanceHex,
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 }
 
@@ -46,7 +46,7 @@ func TestPay_NoPrivateKey(t *testing.T) {
 			"id":      1,
 			"result":  "0xde0b6b3a7640000", // 1 ETH in wei (hex)
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 
 	p, _ := testProtocol(t, handler)
@@ -89,7 +89,7 @@ func TestPay_GasTooHigh(t *testing.T) {
 	// Return a high gas price.
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		var reqBody map[string]any
-		json.NewDecoder(r.Body).Decode(&reqBody)
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
 		method := reqBody["method"].(string)
 
 		var result string
@@ -105,7 +105,7 @@ func TestPay_GasTooHigh(t *testing.T) {
 			"id":      1,
 			"result":  result,
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(handler))
@@ -181,7 +181,7 @@ func TestVerify_Success(t *testing.T) {
 				"gasUsed":     "0x5208",
 			},
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 
 	p, _ := testProtocol(t, handler)
@@ -311,7 +311,7 @@ func TestHandlePaymentRequired_NoKey(t *testing.T) {
 			"id":      1,
 			"result":  "0xde0b6b3a7640000", // 1 ETH
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 
 	p, _ := testProtocol(t, rpcHandler)
@@ -360,7 +360,7 @@ func TestCreatePaymentRequiredResponse(t *testing.T) {
 	}
 
 	var envelope PaymentEnvelope
-	json.NewDecoder(resp.Body).Decode(&envelope)
+	_ = json.NewDecoder(resp.Body).Decode(&envelope)
 	if envelope.RecipientAddress != "0xrecipient" {
 		t.Errorf("expected 0xrecipient, got %s", envelope.RecipientAddress)
 	}

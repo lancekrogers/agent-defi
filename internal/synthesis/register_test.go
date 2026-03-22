@@ -18,7 +18,7 @@ func TestRegister_Success(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(RegisterResponse{
+		_ = json.NewEncoder(w).Encode(RegisterResponse{
 			ParticipantID:   "test-id",
 			TeamID:          "test-team",
 			Name:            "OBEY Vault Agent",

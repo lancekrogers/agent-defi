@@ -20,7 +20,7 @@ func TestCheckApproval_AlreadyApproved(t *testing.T) {
 			t.Error("missing x-universal-router-version header")
 		}
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{"approval": nil})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"approval": nil})
 	}))
 	defer srv.Close()
 
@@ -42,7 +42,7 @@ func TestCheckApproval_AlreadyApproved(t *testing.T) {
 func TestCheckApproval_NeedsApproval(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"approval": map[string]interface{}{
 				"to":      "0xpermit2",
 				"from":    "0xwallet",
@@ -79,13 +79,13 @@ func TestGetQuote_Classic(t *testing.T) {
 		}
 
 		var body map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		if body["tokenInChainId"] != "8453" {
 			t.Errorf("tokenInChainId should be string, got: %v", body["tokenInChainId"])
 		}
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"requestId":  "test-req-123",
 			"routing":    "CLASSIC",
 			"quote":      map[string]interface{}{"input": map[string]string{"token": "0xUSDC", "amount": "10000000"}, "output": map[string]string{"token": "0xWETH", "amount": "3100000000000000"}, "gasFeeUSD": "0.01"},
@@ -128,13 +128,13 @@ func TestGetSwap(t *testing.T) {
 		}
 
 		var body map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		if _, ok := body["permitData"]; ok {
 			t.Error("null permitData should be stripped from swap request")
 		}
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"swap": map[string]interface{}{
 				"to":       "0xrouter",
 				"from":     "0xwallet",
@@ -169,7 +169,7 @@ func TestGetSwap(t *testing.T) {
 func TestAuthFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":"invalid api key"}`))
+		_, _ = w.Write([]byte(`{"error":"invalid api key"}`))
 	}))
 	defer srv.Close()
 

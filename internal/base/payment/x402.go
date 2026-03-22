@@ -234,7 +234,7 @@ func (p *protocol) HandlePaymentRequired(ctx context.Context, resp *http.Respons
 	if err != nil {
 		return nil, fmt.Errorf("payment: failed to read 402 body: %w", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	var envelope PaymentEnvelope
 	if err := json.Unmarshal(body, &envelope); err != nil {
@@ -321,7 +321,7 @@ func (p *protocol) getBalance(ctx context.Context, address string) (*big.Int, er
 	if err != nil {
 		return nil, fmt.Errorf("payment: RPC call failed: %w", ErrChainUnreachable)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -371,7 +371,7 @@ func (p *protocol) getGasPrice(ctx context.Context) (*big.Int, error) {
 	if err != nil {
 		return nil, fmt.Errorf("payment: RPC call failed: %w", ErrChainUnreachable)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var rpcResp struct {
 		Result string `json:"result"`
@@ -409,7 +409,7 @@ func (p *protocol) getTransactionReceipt(ctx context.Context, txHash string) (*R
 	if err != nil {
 		return nil, fmt.Errorf("payment: RPC call failed: %w", ErrChainUnreachable)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var rpcResp struct {
 		Result *struct {

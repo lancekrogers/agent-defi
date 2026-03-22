@@ -37,7 +37,7 @@ func rpcHandlerFunc(result interface{}) http.HandlerFunc {
 			"id":      1,
 			"result":  json.RawMessage(resultData),
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 }
 
@@ -59,7 +59,7 @@ func (h *rpcSequenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"id":      1,
 		"result":  json.RawMessage(resultData),
 	}
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // abiEncodeIdentity builds a hex-encoded ABI response for getIdentity(bytes32)
